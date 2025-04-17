@@ -97,23 +97,25 @@ function model(_class, model)
 end
 
 function plugin(_class, plugin)
-    if _class.__models then
-        for model,_class in pairs(_class.__models) do
+    Citizen.CreateThread(function()
+        if _class.__models then
+            for model,_class in pairs(_class.__models) do
+                if _G[plugin].__prototype.OnPluginApply then
+                    _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
+                end
+            
+                RegisterObjectScript(model, plugin, _G[plugin])
+            end
+        else
+            local model = _class.__prototype.model
+        
             if _G[plugin].__prototype.OnPluginApply then
                 _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
             end
         
             RegisterObjectScript(model, plugin, _G[plugin])
         end
-    else
-        local model = _class.__prototype.model
-    
-        if _G[plugin].__prototype.OnPluginApply then
-            _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-        end
-    
-        RegisterObjectScript(model, plugin, _G[plugin])
-    end
+    end)
 end
 
 
