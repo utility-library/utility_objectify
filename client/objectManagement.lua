@@ -195,6 +195,8 @@ function GetExternalObjectScriptStatic(model, name)
 end
 
 function GetObjectScriptInstance(obj, name)
+    if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
+
     -- Wait that the object is rendered
     while not UtilityNet.IsEntityRendered(obj) do
         Citizen.Wait(0)
