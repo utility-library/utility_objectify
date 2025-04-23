@@ -242,6 +242,30 @@ function GetObjectScriptInstance(obj, name)
     return objectScripts[obj][name]
 end
 
+function GetNetScriptInstance(netid, name)
+    if not netid then error("GetNetScriptInstance: passed netid is nil") return end
+
+    local start = GetGameTimer()
+    while not UtilityNet.IsReady(netid) do
+        if GetGameTimer() - start > 5000 then
+            error("GetNetScriptInstance: timed out IsReady for netid "..tostring(netid))
+        end
+        Citizen.Wait(0)
+    end
+
+    local obj = UtilityNet.GetEntityFromUNetId(netid)
+
+    local start = GetGameTimer()
+    while not UtilityNet.IsEntityRendered(obj) do
+        if GetGameTimer() - start > 5000 then
+            error("GetNetScriptInstance: timed out IsEntityRendered for netid "..tostring(netid)..", obj "..tostring(obj))
+        end
+        Citizen.Wait(0)
+    end
+
+    return GetObjectScriptInstance(obj, name)
+end
+
 function AreObjectScriptsFullyLoaded(obj)
     if not DoesEntityExist(obj) then
         print("AreObjectScriptsFullyLoaded: object "..tostring(obj).." doesn't exist, skipping")
