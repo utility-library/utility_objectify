@@ -68,8 +68,13 @@ deepcopy = function(orig, copies)
     local copy = {}
     copies[orig] = copy
 
-    for k, v in next, orig, nil do -- Dont use __pairs metatable
-        copy[deepcopy(k, copies)] = deepcopy(v, copies)
+    for k, v in next, orig, nil do
+        local key_copy = deepcopy(k, copies)
+        if type(k) == 'string' and k:sub(1, 5) == "_leap" then
+            copy[key_copy] = v -- copy by reference
+        else
+            copy[key_copy] = deepcopy(v, copies)
+        end
     end
 
     setmetatable(copy, deepcopy(getmetatable(orig), copies))
@@ -206,7 +211,7 @@ end)
 ------------------------------------
 
 --@utility_objectify/client/objectManagement.lua
--- v1.2
+-- v1.3
 local tag = "^3ObjectManagement^0"
 local modelScripts = {}
 local objectScripts = {}
@@ -301,7 +306,15 @@ function CallMethodForAllObjectScripts(obj, method, ...)
     end
 
     for k,v in ipairs(scripts) do
+        if not DoesEntityExist(obj) then -- Object was deleted in the meantime
+            break
+        end
+
         local instance = GetObjectScriptInstance(obj, v.name)
+        
+        if not instance then -- Instance was deleted in the meantime
+            break
+        end
 
         if instance[method] then
             instance[method](instance, ...)
@@ -403,15 +416,12 @@ function GetExternalObjectScriptStatic(model, name)
 end
 
 function GetObjectScriptInstance(obj, name)
+    if not obj then error("GetObjectScriptInstance: passed obj is nil, name: "..name) end
     if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
 
     -- Wait that the object is rendered
     while not UtilityNet.IsEntityRendered(obj) do
         Citizen.Wait(0)
-    end
-
-    if not obj then
-        error("GetObjectScriptInstance: obj is nil, name: "..name)
     end
 
     local model = GetEntityModel(obj)
@@ -448,6 +458,30 @@ function GetObjectScriptInstance(obj, name)
     end
 
     return objectScripts[obj][name]
+end
+
+function GetNetScriptInstance(netid, name)
+    if not netid then error("GetNetScriptInstance: passed netid is nil") return end
+
+    local start = GetGameTimer()
+    while not UtilityNet.IsReady(netid) do
+        if GetGameTimer() - start > 5000 then
+            error("GetNetScriptInstance: timed out IsReady for netid "..tostring(netid))
+        end
+        Citizen.Wait(0)
+    end
+
+    local obj = UtilityNet.GetEntityFromUNetId(netid)
+
+    local start = GetGameTimer()
+    while not UtilityNet.IsEntityRendered(obj) do
+        if GetGameTimer() - start > 5000 then
+            error("GetNetScriptInstance: timed out IsEntityRendered for netid "..tostring(netid)..", obj "..tostring(obj))
+        end
+        Citizen.Wait(0)
+    end
+
+    return GetObjectScriptInstance(obj, name)
 end
 
 function AreObjectScriptsFullyLoaded(obj)
@@ -491,6 +525,7 @@ UtilityNet.OnRender(function(id, obj, model)
         local model = GetEntityModel(obj)
         Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
 
+        CallMethodForAllObjectScripts(obj, "OnAwake")
         CallMethodForAllObjectScripts(obj, "OnSpawn")
         CallMethodForAllObjectScripts(obj, "AfterSpawn")
 
