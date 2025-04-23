@@ -67,8 +67,13 @@ deepcopy = function(orig, copies)
     local copy = {}
     copies[orig] = copy
 
-    for k, v in next, orig, nil do -- Dont use __pairs metatable
-        copy[deepcopy(k, copies)] = deepcopy(v, copies)
+    for k, v in next, orig, nil do
+        local key_copy = deepcopy(k, copies)
+        if type(k) == 'string' and k:sub(1, 5) == "_leap" then
+            copy[key_copy] = v -- copy by reference
+        else
+            copy[key_copy] = deepcopy(v, copies)
+        end
     end
 
     setmetatable(copy, deepcopy(getmetatable(orig), copies))
