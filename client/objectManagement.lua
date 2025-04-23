@@ -307,6 +307,7 @@ UtilityNet.OnRender(function(id, obj, model)
         local model = GetEntityModel(obj)
         Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
 
+        CallMethodForAllObjectScripts(obj, "OnAwake")
         CallMethodForAllObjectScripts(obj, "OnSpawn")
         CallMethodForAllObjectScripts(obj, "AfterSpawn")
 
