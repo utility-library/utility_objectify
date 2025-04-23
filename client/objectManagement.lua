@@ -1,4 +1,4 @@
--- v1.2
+-- v1.3
 local tag = "^3ObjectManagement^0"
 local modelScripts = {}
 local objectScripts = {}
@@ -93,7 +93,15 @@ function CallMethodForAllObjectScripts(obj, method, ...)
     end
 
     for k,v in ipairs(scripts) do
+        if not DoesEntityExist(obj) then -- Object was deleted in the meantime
+            break
+        end
+
         local instance = GetObjectScriptInstance(obj, v.name)
+        
+        if not instance then -- Instance was deleted in the meantime
+            break
+        end
 
         if instance[method] then
             instance[method](instance, ...)
@@ -195,15 +203,12 @@ function GetExternalObjectScriptStatic(model, name)
 end
 
 function GetObjectScriptInstance(obj, name)
+    if not obj then error("GetObjectScriptInstance: passed obj is nil, name: "..name) end
     if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
 
     -- Wait that the object is rendered
     while not UtilityNet.IsEntityRendered(obj) do
         Citizen.Wait(0)
-    end
-
-    if not obj then
-        error("GetObjectScriptInstance: obj is nil, name: "..name)
     end
 
     local model = GetEntityModel(obj)
