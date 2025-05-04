@@ -211,7 +211,7 @@ end)
 ------------------------------------
 
 --@utility_objectify/client/objectManagement.lua
--- v1.3
+-- v1.4
 local tag = "^3ObjectManagement^0"
 local modelScripts = {}
 local objectScripts = {}
@@ -310,7 +310,7 @@ function CallMethodForAllObjectScripts(obj, method, ...)
             break
         end
 
-        local instance = GetObjectScriptInstance(obj, v.name)
+        local instance = GetObjectScriptInstance(obj, v.name, true)
         
         if not instance then -- Instance was deleted in the meantime
             break
@@ -415,13 +415,19 @@ function GetExternalObjectScriptStatic(model, name)
     end
 end
 
-function GetObjectScriptInstance(obj, name)
+function GetObjectScriptInstance(obj, name, nocheck)
     if not obj then error("GetObjectScriptInstance: passed obj is nil, name: "..name) end
     if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
 
-    -- Wait that the object is rendered
-    while not UtilityNet.IsEntityRendered(obj) do
-        Citizen.Wait(0)
+    if not nocheck then
+        -- Wait that the object is rendered
+        local start = GetGameTimer()
+        while not UtilityNet.IsEntityRendered(obj) do
+            if GetGameTimer() - start > 5000 then
+                error("GetObjectScriptInstance: UtilityNet.IsEntityRendered timed out for "..GetEntityArchetypeName(obj).." > "..name, 2)
+            end
+            Citizen.Wait(0)
+        end
     end
 
     local model = GetEntityModel(obj)
@@ -430,7 +436,11 @@ function GetObjectScriptInstance(obj, name)
         -- Check if script should be loaded
         if _IsObjectScriptRegistered(model, name) then
             -- Wait for script to be loaded
+            local start = GetGameTimer()
             while not objectScripts[obj] or not objectScripts[obj][name] do
+                if GetGameTimer() - start > 5000 then
+                    error("GetObjectScriptInstance: timed out for "..GetEntityArchetypeName(obj).." > "..name, 2)
+                end
                 Citizen.Wait(0)
             end
         else
@@ -461,12 +471,12 @@ function GetObjectScriptInstance(obj, name)
 end
 
 function GetNetScriptInstance(netid, name)
-    if not netid then error("GetNetScriptInstance: passed netid is nil") return end
+    if not netid then error("GetNetScriptInstance: passed netid is nil", 2) return end
 
     local start = GetGameTimer()
     while not UtilityNet.IsReady(netid) do
         if GetGameTimer() - start > 5000 then
-            error("GetNetScriptInstance: timed out IsReady for netid "..tostring(netid))
+            error("GetNetScriptInstance: timed out IsReady for netid "..tostring(netid), 2)
         end
         Citizen.Wait(0)
     end
@@ -476,8 +486,18 @@ function GetNetScriptInstance(netid, name)
     local start = GetGameTimer()
     while not UtilityNet.IsEntityRendered(obj) do
         if GetGameTimer() - start > 5000 then
-            error("GetNetScriptInstance: timed out IsEntityRendered for netid "..tostring(netid)..", obj "..tostring(obj))
+            error("GetNetScriptInstance: timed out IsEntityRendered for netid "..tostring(netid)..", obj "..tostring(obj), 2)
         end
+        Citizen.Wait(0)
+    end
+
+    local start = GetGameTimer()
+    while not Entity(obj).state.om_scripts_created do
+        if GetGameTimer() - start > 5000 then
+            error("GetNetScriptInstance: timed out, not all scripts created after 5s for netid "..tostring(netid)..", obj "..tostring(obj), 2)
+        end
+
+        warn(obj..' waiting for all scripts to be created')
         Citizen.Wait(0)
     end
 
@@ -486,7 +506,7 @@ end
 
 function AreObjectScriptsFullyLoaded(obj)
     if not DoesEntityExist(obj) then
-        print("AreObjectScriptsFullyLoaded: object "..tostring(obj).." doesn't exist, skipping")
+        warn("AreObjectScriptsFullyLoaded: object "..tostring(obj).." doesn't exist, skipping")
         return false
     end
 
@@ -521,6 +541,7 @@ UtilityNet.OnRender(function(id, obj, model)
         if not created then
             return
         end
+        Entity(obj).state:set("om_scripts_created", true, false)
 
         local model = GetEntityModel(obj)
         Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
@@ -531,11 +552,12 @@ UtilityNet.OnRender(function(id, obj, model)
 
         -- Used for tracking object loading state
         Entity(obj).state:set("om_loaded", true, false)
+        UtilityNet.PreserveEntity(id)
     end
 end)
+
 UtilityNet.OnUnrender(function(id, obj, model)
     if objectScripts[obj] then
-        UtilityNet.PreserveEntity(id)
         CallMethodForAllObjectScripts(obj, "OnDestroy")
         objectScripts[obj] = nil
 
