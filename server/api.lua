@@ -1,11 +1,67 @@
+--@utility_objectify/server/entity.lua
+if not UtilityNet then
+    error("Please load the utility_lib before utility_objectify!")
+end
+
+class BaseEntity {
+    id = nil,
+    state = nil,
+
+    constructor = function(coords: vector3 | nil, rotation: vector3 | nil, options = {})
+        if coords != nil then
+            self:create(coords, rotation, options)
+        end
+    end,
+
+    deconstructor = function()
+        if self.OnDestroy then
+            self:OnDestroy()
+        end
+
+        UnregisterEntity(self)
+        UtilityNet.DeleteEntity(self.id)
+    end,
+
+    create = function(coords: vector3, rotation: vector3 | nil, options = {})
+        if not self.model then
+            error("${type(self)}: trying to create entity without model, please use the model decorator to set the model")
+        end
+
+        options.rotation = options.rotation or rotation
+        options.abstract = options.abstract or self.abstract
+
+        self.id = UtilityNet.CreateEntity(self.model, coords, options)
+        self.state = UtilityNet.State(self.id)
+
+        RegisterEntity(self)
+        
+        if self.OnSpawn then
+            self:OnSpawn()
+        end
+    end
+}
+
+------------------------------------
+
 --@utility_objectify/server/framework.lua
 -- v1.1
+IsServer = true
+IsClient = false
+
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 local callbacks = {}
 
-function rpc(fn, _return)
+local rpcEntities = {} -- Used to store all class exposed rpcs
+local idToClass = {} -- Used to store all entities (map id to class)
+
+function rpc_hasreturn(fn, _return)
     local sig = leap.fsignature(fn)
-    _return = _return != nil ? _return : sig.has_return
+    return _return != nil ? _return : sig.has_return
+end
+
+function rpc_function(fn, _return)
+    local sig = leap.fsignature(fn)
+    _return = rpc_hasreturn(fn, _return)
     
     local name = namespace..sig.name
 
@@ -21,7 +77,7 @@ function rpc(fn, _return)
             
             -- For make the return of lua works
             local _cb = table.pack(fn(...))
-                
+            
             if _cb ~= nil then -- If the callback is not nil
                 TriggerClientEvent(name, source, id, _cb) -- Trigger the client event
             end
@@ -29,9 +85,134 @@ function rpc(fn, _return)
     end
 end
 
+function rpc_entity(className, fn, _return)
+    local sig = leap.fsignature(fn)
+    local ogname = sig.name
+    sig.name =  className.."."..sig.name
+
+    
+    --[[
+    -- This function is used as a "global" function to expose a rpc to the client for a specific class
+    -- Clients will pass as first argument the id of the entity and it will call the function in the object class
+    -- Example:
+    --   class Test extends BaseEntity {
+    --       @rpc()
+    --       test = function(a)
+    --           print("from client:", a)
+    --       end
+    --   }
+    --
+    --   When the client calls the rpc this is the call stack:
+    --    client: send call to Test.test (className:fn) passing as first argument the uNetId of the entity
+    --    server: call a global function that will resolve the entity from the uNetId and call the appropriate function
+    --]]
+    local _fn = leap.registerfunc(function(id, ...)
+        local source = source
+        local _class = GetEntityClass(id)
+        
+        if not _class then
+            error("${ogname}(${source}): Entity with id ${tostring(id)} does not exist")
+            return
+        end
+
+        local className2 = type(_class)
+        if className2 != className then
+            error("${ogname}(${source}): Entity with id ${tostring(id)} is not a ${className}")
+            return
+        end
+
+        if not _class[ogname] then
+            error("${ogname}(${source}): Class ${className} doesnt define ${ogname}")
+            return
+        end
+
+        if not rpcEntities[className] then
+            error("${ogname}(${className}): Class ${className} doesnt expose any rpcs")
+            return
+        end
+
+        if not rpcEntities[className][ogname] then
+            error("${ogname}(${source}): Class ${className} doesnt expose ${ogname}")
+            return
+        end
+
+        if rpcEntities[className][ogname] then
+            return _class[ogname](id, ...)
+        end
+    end, sig)
+
+    rpc_function(_fn, _return)
+
+    if rpc_hasreturn(fn, _return) then
+        TriggerClientEvent(namespace.."RegisterCallback", -1, sig.name) -- Register the callback on runtime for connected clients!
+    end
+end
+
+function rpc(fn, _return, c)
+    if _type(fn) == "function" then
+        rpc_function(fn, _return)
+    else
+        local class = fn
+        local fn = _return
+        local _return = c
+        
+        if not class is BaseEntity then
+            error("The rpc decorator on classes is only allowed to be used on classes that inherit from BaseEntity")
+        end
+
+        local sig = leap.fsignature(fn)
+        local className = type(class)
+
+        if not rpcEntities[className] then
+            rpcEntities[className] = {}
+        end
+
+        if not rpcEntities[className][sig.name] then
+            rpcEntities[className][sig.name] = true -- Set the rpc as exposed
+
+            -- Register global function that will handle "entity branching"
+            rpc_entity(className, fn, _return)
+        end
+    end
+end
+
 @rpc(true)
 function GetCallbacks()
     return callbacks
+end
+
+-- Functions called by BaseEntity after creation
+function RegisterEntity(class)
+    idToClass[class.id] = class
+end
+
+function UnregisterEntity(class)
+    idToClass[class.id] = nil
+end
+
+function GetEntityClass(id)
+    return idToClass[id]
+end
+
+------
+
+function model(_class, model, abstract)
+    if type(model) == "table" then
+        local models = {}
+
+        for k,v in pairs(model) do
+            local c_class = deepcopy(_class)
+            models[v] = c_class
+
+            c_class.__prototype.model = v
+            c_class.__prototype.abstract = true
+        end
+
+        _class.__models = models
+    elseif type(model) == "string" then
+        _class.__prototype.model = model
+        _class.__prototype.abstract = abstract
+    end
 end
 
 ------------------------------------

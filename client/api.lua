@@ -1,55 +1,77 @@
 --@utility_objectify/client/framework.lua
 -- v1.1
-local AppendMethod = function(self, toAppendFuncName, funcName)
-    local _original = self[funcName]
+IsServer = false
+IsClient = true
 
-    self[funcName] = function(...)
-        if _original then _original(...) end
-        self[toAppendFuncName](...)
+local callbacksLoaded = false
+local callbacks = {["GetCallbacks"] = true}
+
+local function CombineHooks(self, methodName, beforeName, afterName)
+    local before = self[beforeName]
+    local main = self[methodName]
+    local after = self[afterName]
+
+    self[methodName] = function(...)
+        if before then before(self, ...) end
+        if main then main(self, ...) end
+        if after then return after(self, ...) end
     end
 end
 
+local server_rpc_mt = {
+    __index = function(self, key)
+        return function(...)
+            return Server["${type(self)}.${key}"](self.id, ...)
+        end
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register server methods from the client, please register them from the server using the rpc decorator!")
+    end
+}
+
 class BaseEntity {
+    server = nil,
+    listenedStates = {},
+    __stateChangeHandler = nil,
+
     constructor = function()
-        AppendMethod(self, "_OnSpawn", "OnSpawn")
-        AppendMethod(self, "_OnDestroy", "OnDestroy")
+        CombineHooks(self, "OnSpawn", "_BeforeOnSpawn", "_AfterOnSpawn")
+        CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
     end,
 
-    _OnSpawn = function()
+    _BeforeOnSpawn = function() 
+        self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
+    end,
+
+    _AfterOnSpawn = function()
+        local function onStateChange(listeners, value, initial)
+            for _, data in pairs(listeners) do
+                if data.value ~= nil then
+                    if value ~= data.value then
+                        continue
+                    end
+                end
+
+                data.fn(value, initial)
+            end
+        end
+
         if self.listenedStates and next(self.listenedStates) then
             for key, listeners in pairs(self.listenedStates) do
-                for _, data in pairs(listeners) do
-                    if data.value ~= nil then
-                        if self.state[key] ~= data.value then
-                            continue
-                        end
-                    end
-    
-                    data.fn(self.state[key], true)
-                end
+                onStateChange(listeners, self.state[key], true)
             end
 
             self.__stateChangeHandler = UtilityNet.AddStateBagChangeHandler(self.id, function(key, value)
                 local listeners = self.listenedStates[key]
 
-                if not listeners then
-                    return
-                end
-
-                for _, data in pairs(listeners) do
-                    if data.value ~= nil then
-                        if value ~= data.value then
-                            continue
-                        end
-                    end
-    
-                    data.fn(value, false)
+                if listeners then
+                    onStateChange(listeners, value, false)
                 end
             end)
         end
     end,
 
-    _OnDestroy = function()
+    _AfterOnDestroy = function()
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
@@ -123,7 +145,6 @@ function plugin(_class, plugin)
     end)
 end
 
-
 function state(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
@@ -155,11 +176,37 @@ function event(self, fn, key, ignoreRendering)
 end
 
 -- RPC
-local callbacksLoaded = false
-local callbacks = {["GetCallbacks"] = true}
-
 function SetRPCNamespace(namespace)
     Server.namespace = namespace..":"
+end
+
+function GenerateCallbackId()
+    return GetHashKey(GetPlayerName(-1) .. GetGameTimer())
+end
+
+function AwaitCallback(name, id)
+    local p = promise.new()        
+    Citizen.SetTimeout(5000, function()
+        if p.state == 0 then
+            warn("Server callback ${name} (${tostring(id)}) timed out")
+            p:reject({})
+        end
+    end)
+
+    local eventHandler = nil
+
+    -- Register a new event to handle the callback from the server
+    RegisterNetEvent(name)
+    eventHandler = AddEventHandler(name, function(_id, data)
+        if _id ~= id then return end
+
+        Citizen.SetTimeout(1, function()
+            RemoveEventHandler(eventHandler)
+        end)
+        p:resolve(data)
+    end)
+
+    return p
 end
 
 Server = setmetatable({
@@ -175,23 +222,8 @@ Server = setmetatable({
             end
 
             if callbacks[key] then
-                local p = promise.new()        
-                local id = GetHashKey(GetPlayerName(-1) .. GetGameTimer()) -- Generate a random id (we use player name + game timer and hash it to make it unique)
-
-                local eventHandler = nil
-            
-                -- Register a new event to handle the callback from the server
-                RegisterNetEvent(name)
-                eventHandler = AddEventHandler(name, function(_id, data)
-                    if _id ~= id then
-                        return
-                    end
-
-                    Citizen.SetTimeout(1, function()
-                        RemoveEventHandler(eventHandler)
-                    end)
-                    p:resolve(data)
-                end)
+                local id = GenerateCallbackId()
+                local p = AwaitCallback(name, id)
                 
                 TriggerServerEvent(name, id, ...)
                 return table.unpack(Citizen.Await(p))
@@ -206,6 +238,11 @@ Server = setmetatable({
 Citizen.CreateThreadNow(function()
     callbacks = Server.GetCallbacks()
     callbacksLoaded = true
+
+    RegisterNetEvent(Server.namespace.."RegisterCallback")
+    AddEventHandler(Server.namespace.."RegisterCallback", function(key)
+        callbacks[key] = true
+    end)
 end)
 
 ------------------------------------
