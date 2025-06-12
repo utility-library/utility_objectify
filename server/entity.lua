@@ -34,8 +34,14 @@ class BaseEntity {
 
         RegisterEntity(self)
         
+        if self.OnAwake then
+            self:OnAwake()
+        end
         if self.OnSpawn then
             self:OnSpawn()
+        end
+        if self.AfterSpawn then
+            self:AfterSpawn()
         end
     end
 }
