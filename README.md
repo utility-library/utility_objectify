@@ -5,7 +5,7 @@ Take a raw entity and objectify it, make it manageable, programmable, and lifecy
 
 Dependencies: 
 - [utility_lib](https://github.com/utility-library/utility_lib)
-- [leap (leap3)](https://github.com/utility-library/leap3)
+- [leap](https://github.com/utility-library/leap)
 
 > **Note:** `utility_objectify` is a work in progress and is still in development.
 
