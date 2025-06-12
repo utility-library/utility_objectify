@@ -35,8 +35,14 @@ class BaseEntity {
 
         RegisterEntity(self)
         
+        if self.OnAwake then
+            self:OnAwake()
+        end
         if self.OnSpawn then
             self:OnSpawn()
+        end
+        if self.AfterSpawn then
+            self:AfterSpawn()
         end
     end
 }
@@ -71,7 +77,7 @@ function rpc_function(fn, _return)
     else
         callbacks[sig.name] = true
 
-        RegisterServerEvent(name)
+        RegisterNetEvent(name)
         AddEventHandler(name, function(id, ...)
             local source = source
             
@@ -89,7 +95,6 @@ function rpc_entity(className, fn, _return)
     local sig = leap.fsignature(fn)
     local ogname = sig.name
     sig.name =  className.."."..sig.name
-
     
     --[[
     -- This function is used as a "global" function to expose a rpc to the client for a specific class
@@ -137,7 +142,7 @@ function rpc_entity(className, fn, _return)
         end
 
         if rpcEntities[className][ogname] then
-            return _class[ogname](id, ...)
+            return _class[ogname](_class, ...)
         end
     end, sig)
 
@@ -194,6 +199,64 @@ function GetEntityClass(id)
     return idToClass[id]
 end
 
+
+function GenerateCallbackId()
+    return "cb"..GetHashKey(tostring(math.random()) .. GetGameTimer())
+end
+
+function AwaitCallback(name, cid, id)
+    local p = promise.new()        
+    Citizen.SetTimeout(5000, function()
+        if p.state == 0 then
+            warn("Client callback ${name}(${tostring(id)}) sended to ${tostring(cid)} timed out")
+            p:reject({})
+        end
+    end)
+
+    local eventHandler = nil
+
+    -- Register a new event to handle the callback from the client
+    RegisterNetEvent(name)
+    eventHandler = AddEventHandler(name, function(_id, data)
+        if _id ~= id then return end
+
+        Citizen.SetTimeout(1, function()
+            RemoveEventHandler(eventHandler)
+        end)
+        p:resolve(data)
+    end)
+
+    return p
+end
+
+local await = setmetatable({}, {
+    __index = function(self, key)
+        local name = namespace..key
+
+        return function(cid: number, ...)
+            local id = GenerateCallbackId()
+            local p = AwaitCallback(name, cid, id)
+            
+            TriggerClientEvent(name, cid, id, ...)
+            return table.unpack(Citizen.Await(p))
+        end
+    end
+})
+
+Client = setmetatable({}, {
+    __index = function(self, key)
+        local name = namespace..key
+
+        if key == "await" then
+            return await
+        else
+            return function(cid: number, ...)
+                TriggerClientEvent(name, cid, ...)
+            end
+        end
+    end,
+})
+
 ------
 
 function model(_class, model, abstract)
@@ -201,7 +264,7 @@ function model(_class, model, abstract)
         local models = {}
 
         for k,v in pairs(model) do
-            local c_class = deepcopy(_class)
+            local c_class = table.deepcopy(_class)
             models[v] = c_class
 
             c_class.__prototype.model = v

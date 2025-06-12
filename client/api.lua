@@ -5,6 +5,7 @@ IsClient = true
 
 local callbacksLoaded = false
 local callbacks = {["GetCallbacks"] = true}
+local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
 local function CombineHooks(self, methodName, beforeName, afterName)
     local before = self[beforeName]
@@ -175,13 +176,79 @@ function event(self, fn, key, ignoreRendering)
     return fn
 end
 
+function rpc_hasreturn(fn, _return)
+    local sig = leap.fsignature(fn)
+    return _return != nil ? _return : sig.has_return
+end
+
+function rpc_function(fn, _return)
+    local sig = leap.fsignature(fn)
+    _return = rpc_hasreturn(fn, _return)
+    
+    local name = namespace..sig.name
+
+    if not _return then
+        RegisterNetEvent(name)
+        AddEventHandler(name, function(...)
+            local a = {...}
+            if type(a[1]) == "string" and a[1]:sub(1, 2) == "cb" then
+                error("${sig.name}: You cannot call a standard rpc as a callback, please dont use `await`")
+            end
+            
+            fn(...)
+        end)
+    else
+        RegisterNetEvent(name)
+        AddEventHandler(name, function(id, ...)
+            if type(id) != "string" or id:sub(1, 2) != "cb" then
+                error("${sig.name}: You cannot call a callback as a standard rpc, please use `await`")
+            end
+
+            -- For make the return of lua works
+            local _cb = table.pack(fn(...))
+            
+            if _cb ~= nil then -- If the callback is not nil
+                TriggerServerEvent(name, id, _cb) -- Trigger the server event
+            end
+        end)
+    end
+end
+
+function rpc(fn, _return, c)
+    if _type(fn) == "function" then
+        rpc_function(fn, _return)
+    else
+        --[[ local class = fn
+        local fn = _return
+        local _return = c
+        
+        if not class is BaseEntity then
+            error("The rpc decorator on classes is only allowed to be used on classes that inherit from BaseEntity")
+        end
+
+        local sig = leap.fsignature(fn)
+        local className = type(class)
+
+        if not rpcEntities[className] then
+            rpcEntities[className] = {}
+        end
+
+        if not rpcEntities[className][sig.name] then
+            rpcEntities[className][sig.name] = true -- Set the rpc as exposed
+
+            -- Register global function that will handle "entity branching"
+            rpc_entity(className, fn, _return)
+        end ]]
+    end
+end
+
 -- RPC
-function SetRPCNamespace(namespace)
-    Server.namespace = namespace..":"
+function SetRPCNamespace(_namespace)
+    namespace = _namespace
 end
 
 function GenerateCallbackId()
-    return GetHashKey(GetPlayerName(-1) .. GetGameTimer())
+    return "cb"..GetHashKey(GetPlayerName(-1) .. GetGameTimer())
 end
 
 function AwaitCallback(name, id)
@@ -209,11 +276,9 @@ function AwaitCallback(name, id)
     return p
 end
 
-Server = setmetatable({
-    namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":",
-}, {
+Server = setmetatable({}, {
     __index = function(self, key)
-        local name = self.namespace..key
+        local name = namespace..key
 
         return function(...)
             -- Wait that callbacks are loaded
@@ -239,8 +304,8 @@ Citizen.CreateThreadNow(function()
     callbacks = Server.GetCallbacks()
     callbacksLoaded = true
 
-    RegisterNetEvent(Server.namespace.."RegisterCallback")
-    AddEventHandler(Server.namespace.."RegisterCallback", function(key)
+    RegisterNetEvent(namespace.."RegisterCallback")
+    AddEventHandler(namespace.."RegisterCallback", function(key)
         callbacks[key] = true
     end)
 end)
