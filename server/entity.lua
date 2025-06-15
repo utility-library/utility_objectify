@@ -2,17 +2,56 @@ if not UtilityNet then
     error("Please load the utility_lib before utility_objectify!")
 end
 
+class EntitiesSingleton {
+    list = {},
+
+    constructor = function()
+        self.list = {}
+    end,
+
+    add = function(entity: BaseEntity)
+        table.insert(self.list, entity)
+    end,
+
+    createByName = function(name: string)
+        return _G[name]()
+    end,
+
+    remove = function(entity: BaseEntity)
+        local key = table.find(self.list, entity)
+        table.remove(self.list, key)
+    end,
+
+    get = function(entity: BaseEntity)
+        local _, entity = table.find(self.list, entity)
+
+        return entity
+    end,
+
+    getBy = function(key: string, value)
+        local _, entity = table.find(self.list, function(entity)
+            return entity[key] == value
+        end)
+        
+        return entity
+    end
+}
+
 class BaseEntity {
     id = nil,
     state = nil,
 
     constructor = function(coords: vector3 | nil, rotation: vector3 | nil, options = {})
+        Entities:add(self)
+
         if coords != nil then
             self:create(coords, rotation, options)
         end
     end,
 
     deconstructor = function()
+        Entities:remove(self)
+
         if self.OnDestroy then
             self:OnDestroy()
         end
@@ -45,3 +84,5 @@ class BaseEntity {
         end
     end
 }
+
+Entities = new EntitiesSingleton()
