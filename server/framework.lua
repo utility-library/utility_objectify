@@ -6,7 +6,6 @@ local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 local callbacks = {}
 
 local rpcEntities = {} -- Used to store all class exposed rpcs
-local idToClass = {} -- Used to store all entities (map id to class)
 
 function rpc_hasreturn(fn, _return)
     local sig = leap.fsignature(fn)
@@ -61,7 +60,7 @@ function rpc_entity(className, fn, _return)
     --]]
     local _fn = leap.registerfunc(function(id, ...)
         local source = source
-        local _class = GetEntityClass(id)
+        local _class = Entities:getBy("id", id)
         
         if not _class then
             error("${ogname}(${source}): Entity with id ${tostring(id)} does not exist")
@@ -132,19 +131,6 @@ end
 @rpc(true)
 function GetCallbacks()
     return callbacks
-end
-
--- Functions called by BaseEntity after creation
-function RegisterEntity(class)
-    idToClass[class.id] = class
-end
-
-function UnregisterEntity(class)
-    idToClass[class.id] = nil
-end
-
-function GetEntityClass(id)
-    return idToClass[id]
 end
 
 
