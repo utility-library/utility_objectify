@@ -57,7 +57,6 @@ class BaseEntity {
             self:OnDestroy()
         end
 
-        UnregisterEntity(self)
         UtilityNet.DeleteEntity(self.id)
     end,
 
@@ -72,8 +71,6 @@ class BaseEntity {
         self.id = UtilityNet.CreateEntity(self.model, coords, options)
         self.state = UtilityNet.State(self.id)
 
-        RegisterEntity(self)
-        
         if self.OnAwake then
             self:OnAwake()
         end
