@@ -50,13 +50,19 @@ class BaseEntity {
     end,
 
     deconstructor = function()
+        self:destroy()
+    end,
+    
+    destroy = function()
         Entities:remove(self)
+        
+        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
+            if self.OnDestroy then
+                self:OnDestroy()
+            end
 
-        if self.OnDestroy then
-            self:OnDestroy()
+            UtilityNet.DeleteEntity(self.id)
         end
-
-        UtilityNet.DeleteEntity(self.id)
     end,
 
     create = function(coords: vector3, rotation: vector3 | nil, options = {})
