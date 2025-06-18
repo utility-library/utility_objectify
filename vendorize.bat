@@ -14,8 +14,8 @@ set "SERVER_SRC=%~dp0server\api.lua"
 
 set "CLIENT_DIR=%TARGET%\client"
 set "SERVER_DIR=%TARGET%\server"
-set "CLIENT_DEST=%CLIENT_DIR%\api.lua"
-set "SERVER_DEST=%SERVER_DIR%\api.lua"
+set "CLIENT_DEST=%CLIENT_DIR%\objectify.lua"
+set "SERVER_DEST=%SERVER_DIR%\objectify.lua"
 
 if not exist "%CLIENT_DIR%" mkdir "%CLIENT_DIR%"
 if not exist "%SERVER_DIR%" mkdir "%SERVER_DIR%"
