@@ -58,7 +58,7 @@ class BaseEntity {
         if self.listenedStates and next(self.listenedStates) then
             for key, listeners in pairs(self.listenedStates) do
                 Citizen.CreateThread(function()
-                onStateChange(listeners, self.state[key], true)
+                    onStateChange(listeners, self.state[key], true)
                 end)
             end
 
@@ -243,22 +243,29 @@ function rpc(fn, _return, c)
 end
 
 -- RPC
+local disableTimeoutNext = false
+
 function SetRPCNamespace(_namespace)
     namespace = _namespace
 end
 
-function GenerateCallbackId()
+local GenerateCallbackId = function()
     return "cb"..GetHashKey(GetPlayerName(-1) .. GetGameTimer())
 end
 
-function AwaitCallback(name, id)
-    local p = promise.new()        
-    Citizen.SetTimeout(5000, function()
-        if p.state == 0 then
-            warn("Server callback ${name} (${tostring(id)}) timed out")
-            p:reject({})
-        end
-    end)
+local AwaitCallback = function(name, id)
+    local p = promise.new()    
+   
+    if not disableTimeoutNext then
+        Citizen.SetTimeout(5000, function()
+            if p.state == 0 then
+                warn("Server callback ${name} (${tostring(id)}) timed out")
+                p:reject({})
+            end
+        end)
+    else
+        disableTimeoutNext = false
+    end
 
     local eventHandler = nil
 
@@ -276,7 +283,11 @@ function AwaitCallback(name, id)
     return p
 end
 
-Server = setmetatable({}, {
+Server = setmetatable({ 
+    DisableTimeoutForNext = function()
+        disableTimeoutNext = true
+    end
+}, {
     __index = function(self, key)
         local name = namespace..key
 
