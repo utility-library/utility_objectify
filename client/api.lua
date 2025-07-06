@@ -32,7 +32,6 @@ local server_rpc_mt = {
 
 class BaseEntity {
     server = nil,
-    listenedStates = {},
     __stateChangeHandler = nil,
 
     constructor = function()
@@ -59,7 +58,9 @@ class BaseEntity {
 
         if self.listenedStates and next(self.listenedStates) then
             for key, listeners in pairs(self.listenedStates) do
-                onStateChange(listeners, self.state[key], true)
+                Citizen.CreateThread(function()
+                    onStateChange(listeners, self.state[key], true)
+                end)
             end
 
             self.__stateChangeHandler = UtilityNet.AddStateBagChangeHandler(self.id, function(key, value)
@@ -243,22 +244,29 @@ function rpc(fn, _return, c)
 end
 
 -- RPC
+local disableTimeoutNext = false
+
 function SetRPCNamespace(_namespace)
     namespace = _namespace
 end
 
-function GenerateCallbackId()
+local GenerateCallbackId = function()
     return "cb"..GetHashKey(GetPlayerName(-1) .. GetGameTimer())
 end
 
-function AwaitCallback(name, id)
-    local p = promise.new()        
-    Citizen.SetTimeout(5000, function()
-        if p.state == 0 then
-            warn("Server callback ${name} (${tostring(id)}) timed out")
-            p:reject({})
-        end
-    end)
+local AwaitCallback = function(name, id)
+    local p = promise.new()    
+   
+    if not disableTimeoutNext then
+        Citizen.SetTimeout(5000, function()
+            if p.state == 0 then
+                warn("Server callback ${name} (${tostring(id)}) timed out")
+                p:reject({})
+            end
+        end)
+    else
+        disableTimeoutNext = false
+    end
 
     local eventHandler = nil
 
@@ -276,7 +284,11 @@ function AwaitCallback(name, id)
     return p
 end
 
-Server = setmetatable({}, {
+Server = setmetatable({ 
+    DisableTimeoutForNext = function()
+        disableTimeoutNext = true
+    end
+}, {
     __index = function(self, key)
         local name = namespace..key
 
@@ -636,39 +648,48 @@ if not UtilityNet then
     error("Please load the utility_lib before utility_objectify!")
 end
 
+local resource = GetCurrentResourceName()
 UtilityNet.OnRender(function(id, obj, model)
-    if not objectScripts[obj] then
-        local created = CreateObjectScriptsInstances(obj)
-
-        if not created then
-            return
-        end
-        Entity(obj).state:set("om_scripts_created", true, false)
-
-        local model = GetEntityModel(obj)
-        Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
-
-        CallMethodForAllObjectScripts(obj, "OnAwake")
-        CallMethodForAllObjectScripts(obj, "OnSpawn")
-        CallMethodForAllObjectScripts(obj, "AfterSpawn")
-
-        -- Used for tracking object loading state
-        Entity(obj).state:set("om_loaded", true, false)
-        UtilityNet.PreserveEntity(id)
+    if UtilityNet.GetuNetIdCreator(id) ~= resource then
+        return
     end
+
+    if objectScripts[obj] then
+        return
+    end
+
+    local created = CreateObjectScriptsInstances(obj)
+
+    if not created then
+        return
+    end
+    Entity(obj).state:set("om_scripts_created", true, false)
+
+    local model = GetEntityModel(obj)
+    Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
+
+    CallMethodForAllObjectScripts(obj, "OnAwake")
+    CallMethodForAllObjectScripts(obj, "OnSpawn")
+    CallMethodForAllObjectScripts(obj, "AfterSpawn")
+
+    -- Used for tracking object loading state
+    Entity(obj).state:set("om_loaded", true, false)
+    UtilityNet.PreserveEntity(id)
 end)
 
 UtilityNet.OnUnrender(function(id, obj, model)
-    if objectScripts[obj] then
-        CallMethodForAllObjectScripts(obj, "OnDestroy")
-        objectScripts[obj] = nil
-
-        if Config?.ObjectManagementDebug?.Deleting then
-            developer(tag, "Deleting ^4"..GetEntityArchetypeName(obj).."^0 instances")
-        end
-
-        DeleteEntity(obj)
+    if not objectScripts[obj] then
+        return
     end
+
+    CallMethodForAllObjectScripts(obj, "OnDestroy")
+    objectScripts[obj] = nil
+
+    if Config?.ObjectManagementDebug?.Deleting then
+        developer(tag, "Deleting ^4"..GetEntityArchetypeName(obj).."^0 instances")
+    end
+
+    DeleteEntity(obj)
 end)
 
 
