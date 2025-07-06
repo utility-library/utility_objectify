@@ -22,8 +22,10 @@ class EntitiesSingleton {
         table.remove(self.list, key)
     end,
 
-    get = function(entity: BaseEntity)
-        local _, entity = table.find(self.list, entity)
+    get = function(id: number)
+        local _, entity = table.find(self.list, function(entity) 
+            return entity.id == id
+        end)
 
         return entity
     end,
