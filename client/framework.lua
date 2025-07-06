@@ -31,7 +31,6 @@ local server_rpc_mt = {
 
 class BaseEntity {
     server = nil,
-    listenedStates = {},
     __stateChangeHandler = nil,
 
     constructor = function()
@@ -58,7 +57,9 @@ class BaseEntity {
 
         if self.listenedStates and next(self.listenedStates) then
             for key, listeners in pairs(self.listenedStates) do
+                Citizen.CreateThread(function()
                 onStateChange(listeners, self.state[key], true)
+                end)
             end
 
             self.__stateChangeHandler = UtilityNet.AddStateBagChangeHandler(self.id, function(key, value)
