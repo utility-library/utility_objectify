@@ -335,6 +335,8 @@ end)
 local tag = "^3ObjectManagement^0"
 local modelScripts = {}
 local objectScripts = {}
+local registeredObjects = {}
+local tempObjectsProperties = {} -- Used to store temporary object properties for later instantiation
 local customHooks = {}
 
 local function GetScriptsForModel(model)
@@ -349,6 +351,60 @@ local function _IsObjectScriptRegistered(model, name)
                 return true
             end
         end
+    end
+end
+
+-- Temp objects instances can interact only with tempObjectsProperties, not real instance runtime changed properties
+-- Real objects instances can interact also with tempObjectsProperties
+local function CreateTempObjectAndCallMethod(uNetId, model, method, ...)
+    local _model = type(model) == "string" and GetHashKey(model) or model
+    local scripts = GetScriptsForModel(_model)
+    
+    local _self = nil
+    local _oldNewIndex = nil
+
+    if not scripts then
+        return
+    end
+    
+    for k,v in pairs(scripts) do
+        if v.script.__prototype[method] then
+            if not _self then
+                _self = new v.script()
+                _self.state = UtilityNet.State(uNetId)
+                _self.id = uNetId
+
+                -- Set all temp object properties to new temp instance 
+                -- (so that things done in OnRegister can be reused also in OnUnregister)
+                -- This is done voluntarily like this to dont allow to access real instance properties and prevent strange bugs 
+                -- (when unregistering a rendered object or unrendered the OnUnregister will be called with different objects creating strange situational bugs)
+                if tempObjectsProperties[uNetId] then
+                    for k,v in pairs(tempObjectsProperties[uNetId]) do
+                        _self[k] = v
+                    end
+                end
+
+                local metatable = getmetatable(_self)
+                _oldNewIndex = metatable.__newindex
+
+                metatable.__newindex = function(self, key, value)
+                    -- We store all object properties in a temp table to set them later on object instantiation/OnUnregister
+                    if not tempObjectsProperties[uNetId] then
+                        tempObjectsProperties[uNetId] = {}
+                    end
+
+                    tempObjectsProperties[uNetId][key] = value
+                    rawset(self, key, value)
+                end
+            end
+
+            _self[method](_self, ...)
+        end
+    end
+
+    if _self then -- Reset metatable to default!
+        local metatable = getmetatable(_self)
+        metatable.__newindex = _oldNewIndex
     end
 end
 
@@ -383,6 +439,13 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     instance.state = UtilityNet.State(uNetId)
     instance.id = uNetId
     instance.obj = obj
+
+    -- On object instantiation set all temp object properties to real instance (saves a lot of memory)
+    if tempObjectsProperties[uNetId] then
+        for k,v in pairs(tempObjectsProperties[uNetId]) do
+            instance[k] = v
+        end
+    end
 
     -- Call all hooks .exec method
     for hookMethod, hook in pairs(customHooks) do
@@ -563,8 +626,8 @@ function GetObjectScriptInstance(obj, name, nocheck)
                 end
                 Citizen.Wait(0)
             end
-        else
-            error("GetObjectScriptInstance: requested script instance "..name.." for "..GetEntityArchetypeName(obj).." but it doesnt have any scripts loaded")
+        else -- Script is not registered and will not be loaded in the future (dont exist)
+            return nil 
         end
     end
 
@@ -609,6 +672,11 @@ function GetNetScriptInstance(netid, name)
             error("GetNetScriptInstance: timed out IsEntityRendered for netid "..tostring(netid)..", obj "..tostring(obj), 2)
         end
         Citizen.Wait(0)
+    end
+
+    local model = GetEntityModel(obj)
+    if not IsObjectScriptRegistered(model, name) then
+        return nil
     end
 
     local start = GetGameTimer()
@@ -664,6 +732,10 @@ UtilityNet.OnRender(function(id, obj, model)
         return
     end
 
+    while not registeredObjects[id] do -- Wait that OnRegister is properly called before OnAwake and etc (order of calls is important)
+        Citizen.Wait(0)
+    end
+
     local created = CreateObjectScriptsInstances(obj)
 
     if not created then
@@ -698,6 +770,34 @@ UtilityNet.OnUnrender(function(id, obj, model)
     DeleteEntity(obj)
 end)
 
+RegisterNetEvent("Utility:Net:EntityCreated", function(_, object)
+    CreateTempObjectAndCallMethod(object.id, object.model, "OnRegister")
+    registeredObjects[object.id] = true
+end)
+
+RegisterNetEvent("Utility:Net:RequestDeletion", function(uNetId)
+    registeredObjects[uNetId] = nil
+
+    local model = GetEntityModel(UtilityNet.GetEntityFromUNetId(uNetId))
+    if model then
+        CreateTempObjectAndCallMethod(uNetId, model, "OnUnregister")
+    else
+        warn("OnUnregister: model not found for uNetId "..tostring(uNetId))
+    end
+
+    tempObjectsProperties[uNetId] = nil -- Clear all temp properties on deletion (always)
+end)
+
+Citizen.CreateThread(function()
+    local sliced = UtilityNet.GetEntities()
+
+    for slice, entities in pairs(sliced) do
+        for uNetId,v in pairs(entities) do
+            CreateTempObjectAndCallMethod(uNetId, v.model, "OnRegister")
+            registeredObjects[uNetId] = true
+        end
+    end
+end)
 
 --#region Debug
 Citizen.CreateThread(function()
