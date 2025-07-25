@@ -22,7 +22,13 @@ end
 local server_rpc_mt = {
     __index = function(self, key)
         return function(...)
-            return Server["${type(self)}.${key}"](self.id, ...)
+            local args = {...}
+
+            if type(args[1]) == self.__type and args[1].id == self.id then -- Is self
+                table.remove(args, 1)
+            end
+
+            return Server["${type(self)}.${key}"](self.id, table.unpack(args))
         end
     end,
     __newindex = function(self, key, value)
