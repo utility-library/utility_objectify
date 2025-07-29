@@ -771,6 +771,10 @@ UtilityNet.OnUnrender(function(id, obj, model)
 end)
 
 RegisterNetEvent("Utility:Net:EntityCreated", function(_, object)
+    while not UtilityNet.DoesUNetIdExist(object.id) do
+        Citizen.Wait(0)
+    end
+
     CreateTempObjectAndCallMethod(object.id, object.model, "OnRegister")
     registeredObjects[object.id] = true
 end)
@@ -793,8 +797,10 @@ Citizen.CreateThread(function()
 
     for slice, entities in pairs(sliced) do
         for uNetId,v in pairs(entities) do
-            CreateTempObjectAndCallMethod(uNetId, v.model, "OnRegister")
-            registeredObjects[uNetId] = true
+            if v.createdBy == resource then
+                CreateTempObjectAndCallMethod(uNetId, v.model, "OnRegister")
+                registeredObjects[uNetId] = true
+            end
         end
     end
 end)

@@ -33,7 +33,11 @@ class EntitiesSingleton {
 
     getBy = function(key: string, value)
         local _, entity = table.find(self.list, function(entity)
-            return entity[key] == value
+            if type(value) == "function" then
+                return value(entity[key])
+            else
+                return entity[key] == value
+            end
         end)
         
         return entity
