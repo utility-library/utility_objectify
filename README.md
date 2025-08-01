@@ -19,7 +19,7 @@ Dependencies:
 - **Plugins**: Bind additional classes to the entity for modular functionality.
 
 ## 📖 **Documentation**
-Currently not available
+[View the full documentation](https://utility-2.gitbook.io/utility-objectify/)
 
 ---
 
