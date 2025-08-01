@@ -1,4 +1,4 @@
--- v1.1
+-- v1.2
 IsServer = false
 IsClient = true
 
@@ -35,6 +35,20 @@ local server_rpc_mt = {
     end
 }
 
+local server_plugin_rpc_mt = {
+    __index = function(self, key)
+        -- Create a server_rpc_mt with the plugin name and add the plugin type
+        return setmetatable({
+            id = self.id,
+            __type = type(self) .. "." .. key
+        }, server_rpc_mt)
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register server methods from the client, please register them from the server using the rpc decorator!")
+    end
+}
+
+@skipSerialize({"main", "isPlugin", "plugins", "server"})
 class BaseEntity {
     server = nil,
     __stateChangeHandler = nil,
@@ -44,8 +58,10 @@ class BaseEntity {
         CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
     end,
 
-    _BeforeOnSpawn = function() 
-        self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
+    _BeforeOnSpawn = function()
+        local plugins = setmetatable({id = self.id, __type = type(self)}, server_plugin_rpc_mt)
+
+        self.server = setmetatable({id = self.id, __type = type(self), plugins = plugins}, server_rpc_mt)
     end,
 
     _AfterOnSpawn = function()

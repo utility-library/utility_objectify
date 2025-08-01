@@ -1,4 +1,4 @@
--- v1.4
+-- v1.5
 local tag = "^3ObjectManagement^0"
 local modelScripts = {}
 local objectScripts = {}
@@ -107,6 +107,15 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     instance.id = uNetId
     instance.obj = obj
 
+    if script.name ~= "main" then
+        local main = objectScripts[obj]["main"]
+
+        instance.isPlugin = true
+        instance.main = main -- Register main instance in plugin
+
+        main.plugins[script.name] = instance -- Register plugin in main instance
+    end
+
     -- On object instantiation set all temp object properties to real instance (saves a lot of memory)
     if tempObjectsProperties[uNetId] then
         for k,v in pairs(tempObjectsProperties[uNetId]) do
@@ -137,10 +146,28 @@ local function CreateObjectScriptsInstances(obj)
     end
     
     objectScripts[obj] = {}
-    
-    -- Create script instances in registration order
+
+    -- Find main script (since someone can register the main script after the plugins)
+    local mainIndex = nil
+
     for k,v in ipairs(scripts) do
-        objectScripts[obj][v.name] = CreateObjectScriptInstance(obj, k, "CreateInstances")
+        if v.name == "main" then
+            mainIndex = k
+            break
+        end
+    end
+
+    -- Create main script before possible plugins
+    local main = CreateObjectScriptInstance(obj, mainIndex, "GetInstance")
+    main.plugins = {} -- Allow plugins to register themself
+
+    objectScripts[obj]["main"] = main
+
+    -- Create script instances in registration order (only plugins)
+    for k,v in ipairs(scripts) do
+        if v.name ~= "main" then
+            objectScripts[obj][v.name] = CreateObjectScriptInstance(obj, k, "CreateInstances")
+        end
     end
 
     return true
