@@ -5,7 +5,7 @@ IsClient = false
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 local callbacks = {}
 
-local rpcEntities = {} -- Used to store all class exposed rpcs
+local exposedEntitiesRpcs = {} -- Used to store all class exposed rpcs
 
 function rpc_hasreturn(fn, _return)
     local sig = leap.fsignature(fn)
@@ -38,6 +38,19 @@ function rpc_function(fn, _return)
     end
 end
 
+local function checkRPCExposure(ogname, source, classLabel, methodName)
+    if not exposedEntitiesRpcs[classLabel] or not exposedEntitiesRpcs[classLabel][methodName] then
+        error("${ogname}(${source}): Class ${classLabel} doesn't expose ${methodName}")
+        return false
+    end
+
+    return true
+end
+
+local function callRPC(target, method, ...)
+    return target[method](target, ...)
+end
+
 function rpc_entity(className, fn, _return)
     local sig = leap.fsignature(fn)
     local ogname = sig.name
@@ -60,36 +73,51 @@ function rpc_entity(className, fn, _return)
     --]]
     local _fn = leap.registerfunc(function(id, ...)
         local source = source
-        local _class = Entities:getBy("id", id)
-        
-        if not _class then
-            error("${ogname}(${source}): Entity with id ${tostring(id)} does not exist")
+        local entity = Entities:getBy("id", id)
+        local tag = "${ogname}(${source})"
+
+        if not entity then
+            error("${tag}: Entity with id ${tostring(id)} does not exist")
             return
         end
 
-        local className2 = type(_class)
-        if className2 != className then
-            error("${ogname}(${source}): Entity with id ${tostring(id)} is not a ${className}")
-            return
-        end
+        local isPlugin = className:find("%.")
+        if isPlugin then -- RPC from a plugin
+            local _className, pluginName = className:match("(.*)%.(.*)")
 
-        if not _class[ogname] then
-            error("${ogname}(${source}): Class ${className} doesnt define ${ogname}")
-            return
-        end
+            if not entity.plugins or not entity.plugins[pluginName] then
+                error("${tag}: Entity with id ${tostring(id)} has no plugin ${pluginName}")
+                return
+            end
 
-        if not rpcEntities[className] then
-            error("${ogname}(${className}): Class ${className} doesnt expose any rpcs")
-            return
-        end
+            if type(entity) ~= _className then
+                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
+                return
+            end
 
-        if not rpcEntities[className][ogname] then
-            error("${ogname}(${source}): Class ${className} doesnt expose ${ogname}")
-            return
-        end
+            local plugin = entity.plugins[pluginName]
+            if not plugin[ogname] then
+                error("${tag}: Class ${className} doesnt define ${ogname}")
+                return
+            end
 
-        if rpcEntities[className][ogname] then
-            return _class[ogname](_class, ...)
+            if checkRPCExposure(ogname, source, className, ogname) then
+                return callRPC(plugin, ogname, ...)
+            end
+        else
+            if type(entity) ~= className then
+                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
+                return
+            end
+
+            if not entity[ogname] then
+                error("${tag}: Class ${className} doesnt define ${ogname}")
+                return
+            end
+
+            if checkRPCExposure(ogname, source, className, ogname) then
+                return callRPC(entity, ogname, ...)
+            end
         end
     end, sig)
 
@@ -98,6 +126,8 @@ function rpc_entity(className, fn, _return)
     if rpc_hasreturn(fn, _return) then
         TriggerClientEvent(namespace.."RegisterCallback", -1, sig.name) -- Register the callback on runtime for connected clients!
     end
+
+    sig.name = ogname
 end
 
 function rpc(fn, _return, c)
@@ -113,14 +143,21 @@ function rpc(fn, _return, c)
         end
 
         local sig = leap.fsignature(fn)
-        local className = type(class)
 
-        if not rpcEntities[className] then
-            rpcEntities[className] = {}
+        local className = nil
+
+        if class.isPlugin then
+            className = type(class.main) .. "." .. type(class)
+        else
+            className = type(class)
+        end
+        
+        if not exposedEntitiesRpcs[className] then
+            exposedEntitiesRpcs[className] = {}
         end
 
-        if not rpcEntities[className][sig.name] then
-            rpcEntities[className][sig.name] = true -- Set the rpc as exposed
+        if not exposedEntitiesRpcs[className][sig.name] then
+            exposedEntitiesRpcs[className][sig.name] = true -- Set the rpc as exposed
 
             -- Register global function that will handle "entity branching"
             rpc_entity(className, fn, _return)
@@ -210,4 +247,12 @@ function model(_class, model, abstract)
         _class.__prototype.model = model
         _class.__prototype.abstract = abstract
     end
+end
+
+function plugin(_class, plugin)
+    if not _class.__prototype._plugins then
+        _class.__prototype._plugins = {}
+    end
+
+    table.insert(_class.__prototype._plugins, plugin)
 end
