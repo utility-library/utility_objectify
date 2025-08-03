@@ -54,7 +54,7 @@ class EntitiesSingleton {
     end
 }
 
-@skipSerialize({"plugins", "_plugins", "id", "state", "main", "isPlugin"})
+@skipSerialize({"plugins", "id", "state", "main", "isPlugin"})
 class BaseEntity {
     id = nil,
     state = nil,
@@ -67,9 +67,9 @@ class BaseEntity {
 
         Entities:add(self)
 
-        if self._plugins then
+        if self.__plugins then
             self.plugins = {}
-            for k,v in pairs(self._plugins) do
+            for k,v in pairs(self.__plugins) do
                 local _plugin = _G[v]
 
                 -- Dont call the constructor (reduce useless calls,it will be skipped anyway)
@@ -112,20 +112,62 @@ class BaseEntity {
 
             UtilityNet.DeleteEntity(self.id)
         end
+
+        if self.__stateChangeHandler then
+            UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
+        end
     end,
 
     init = function(id, state)
         self.id = id
         self.state = state
 
-        if self.OnAwake then
-            self:OnAwake()
+        if self.__listenedStates and next(self.__listenedStates) then
+            local function onStateChange(listeners, value, initial)
+                for _, data in pairs(listeners) do
+                    if data.value ~= nil then
+                        if value ~= data.value then
+                            continue
+                        end
+                    end
+
+                    data.fn(value, initial)
+                end
+            end
+
+            for key, listeners in pairs(self.__listenedStates) do
+                Citizen.CreateThread(function()
+                    onStateChange(listeners, self.state[key], true)
+                end)
+            end
+
+            self.__stateChangeHandler = UtilityNet.AddStateBagChangeHandler(self.id, function(key, value)
+                local listeners = self.__listenedStates[key]
+
+                if listeners then
+                    onStateChange(listeners, value, false)
+                end
+            end)
         end
-        if self.OnSpawn then
-            self:OnSpawn()
+
+        if self.plugins then
+            for k,v in pairs(self.plugins) do
+                v:init(id, state)
+            end
         end
-        if self.AfterSpawn then
-            self:AfterSpawn()
+    end,
+
+    callOnAll = function(method, ...)
+        if self[method] then
+            self[method](self, ...)
+        end
+
+        if self.plugins then
+            for k,v in pairs(self.plugins) do
+                if v[method] then
+                    v[method](v, ...)
+                end
+            end
         end
     end,
 
@@ -138,15 +180,13 @@ class BaseEntity {
         options.abstract = options.abstract or self.abstract
 
         local id = UtilityNet.CreateEntity(self.model, coords, options)
-        local state = UtilityNet.State(self.id)
+        local state = UtilityNet.State(id)
 
         self:init(id, state)
-
-        if self.plugins then
-            for k,v in pairs(self.plugins) do
-                v:init(self.id, self.state)
-            end
-        end
+        
+        self:callOnAll("OnAwake")
+        self:callOnAll("OnSpawn")
+        self:callOnAll("AfterSpawn")
     end,
 }
 
@@ -407,11 +447,33 @@ function model(_class, model, abstract)
 end
 
 function plugin(_class, plugin)
-    if not _class.__prototype._plugins then
-        _class.__prototype._plugins = {}
+    if not _class.__prototype.__plugins then
+        _class.__prototype.__plugins = {}
     end
 
-    table.insert(_class.__prototype._plugins, plugin)
+    table.insert(_class.__prototype.__plugins, plugin)
+end
+
+function state(self, fn, key, value)
+        if not self.__listenedStates then
+        self.__listenedStates = {}
+    end
+
+    if not self.__listenedStates[key] then
+        self.__listenedStates[key] = {}
+    end
+
+    table.insert(self.__listenedStates[key], {
+        fn = fn,
+        value = value
+    })
+end
+
+function event(_class, fn, key)
+    RegisterNetEvent(key)
+    AddEventHandler(key, function(...)
+        fn(...)
+    end)
 end
 
 ------------------------------------

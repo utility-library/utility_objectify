@@ -250,9 +250,31 @@ function model(_class, model, abstract)
 end
 
 function plugin(_class, plugin)
-    if not _class.__prototype._plugins then
-        _class.__prototype._plugins = {}
+    if not _class.__prototype.__plugins then
+        _class.__prototype.__plugins = {}
     end
 
-    table.insert(_class.__prototype._plugins, plugin)
+    table.insert(_class.__prototype.__plugins, plugin)
+end
+
+function state(self, fn, key, value)
+        if not self.__listenedStates then
+        self.__listenedStates = {}
+    end
+
+    if not self.__listenedStates[key] then
+        self.__listenedStates[key] = {}
+    end
+
+    table.insert(self.__listenedStates[key], {
+        fn = fn,
+        value = value
+    })
+end
+
+function event(_class, fn, key)
+    RegisterNetEvent(key)
+    AddEventHandler(key, function(...)
+        fn(...)
+    end)
 end
