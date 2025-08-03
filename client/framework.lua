@@ -48,7 +48,7 @@ local server_plugin_rpc_mt = {
     end
 }
 
-@skipSerialize({"main", "isPlugin", "plugins", "server"})
+@skipSerialize({"main", "isPlugin", "plugins", "server", "listenedStates"})
 class BaseEntity {
     server = nil,
     __stateChangeHandler = nil,
@@ -194,8 +194,6 @@ function event(self, fn, key, ignoreRendering)
             end
         end
     end)
-
-    return fn
 end
 
 function rpc_hasreturn(fn, _return)
