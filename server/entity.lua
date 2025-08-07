@@ -10,7 +10,7 @@ class EntitiesSingleton {
     end,
 
     add = function(entity: BaseEntity)
-        table.insert(self.list, entity)
+        self.list[entity.id] = entity
     end,
 
     createByName = function(name: string)
@@ -18,32 +18,29 @@ class EntitiesSingleton {
     end,
 
     remove = function(entity: BaseEntity)
-        local key = table.find(self.list, entity)
-        table.remove(self.list, key)
+        self.list[entity.id] = nil
     end,
 
     get = function(id: number)
-        local _, entity = table.find(self.list, function(entity) 
-            return entity.id == id
-        end)
-
-        return entity
+        return self.list[id]
     end,
 
     getBy = function(key: string, value)
-        local _, entity = table.find(self.list, function(entity)
+        for _, entity in pairs(self.list) do
             if type(value) == "function" then
-                return value(entity[key])
+                if value(entity[key]) then
+                    return entity
+                end
             else
-                return entity[key] == value
+                if entity[key] == value then
+                    return entity
+                end
             end
-        end)
-        
-        return entity
+        end
     end,
 
     getAllBy = function(key: string, value)
-        return table.filter(self.list, function(entity)
+        return table.filter(self.list, function(_, entity)
             if type(value) == "function" then
                 return value(entity[key])
             else
@@ -63,8 +60,6 @@ class BaseEntity {
         if self.isPlugin then
             return
         end
-
-        Entities:add(self)
 
         if self.__plugins then
             self.plugins = {}
@@ -182,6 +177,7 @@ class BaseEntity {
         local state = UtilityNet.State(id)
 
         self:init(id, state)
+        Entities:add(self)
         
         self:callOnAll("OnAwake")
         self:callOnAll("OnSpawn")
