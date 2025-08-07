@@ -1,6 +1,7 @@
 -- v1.2
 IsServer = false
 IsClient = true
+Entities = nil
 
 local callbacksLoaded = false
 local callbacks = {["GetCallbacks"] = true}
@@ -60,8 +61,11 @@ class BaseEntity {
 
     _BeforeOnSpawn = function()
         local plugins = setmetatable({id = self.id, __type = type(self)}, server_plugin_rpc_mt)
-
         self.server = setmetatable({id = self.id, __type = type(self), plugins = plugins}, server_rpc_mt)
+
+        if not self.isPlugin then
+            Entities:add(self)
+        end
     end,
 
     _AfterOnSpawn = function()
@@ -98,8 +102,62 @@ class BaseEntity {
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
+
+        if not self.isPlugin then
+            Entities:remove(self)
+        end
     end
 }
+
+class EntitiesSingleton {
+    list = {},
+
+    constructor = function()
+        self.list = {}
+    end,
+
+    add = function(entity: BaseEntity)
+        self.list[entity.id] = entity
+    end,
+
+    createByName = function(name: string)
+        return _G[name]()
+    end,
+
+    remove = function(entity: BaseEntity)
+        self.list[entity.id] = nil
+    end,
+
+    get = function(id: number)
+        return self.list[id]
+    end,
+
+    getBy = function(key: string, value)
+        for _, entity in pairs(self.list) do
+            if type(value) == "function" then
+                if value(entity[key]) then
+                    return entity
+                end
+            else
+                if entity[key] == value then
+                    return entity
+                end
+            end
+        end
+    end,
+
+    getAllBy = function(key: string, value)
+        return table.filter(self.list, function(_, entity)
+            if type(value) == "function" then
+                return value(entity[key])
+            else
+                return entity[key] == value
+            end
+        end)
+    end
+}
+
+Entities = new EntitiesSingleton()
 
 deepcopy = function(orig, copies)
     copies = copies or {}
