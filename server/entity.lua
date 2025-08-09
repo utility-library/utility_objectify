@@ -2,51 +2,91 @@ if not UtilityNet then
     error("Please load the utility_lib before utility_objectify!")
 end
 
-class EntitiesSingleton {
-    list = {},
+local client_rpc_mt, client_plugin_rpc_mt = nil -- hoisting
+client_rpc_mt = {
+    __index = function(self, key)
+        -- Create "plugins" and "await" at runtime, this reduce memory footprint
+        if key == "plugins" then
+            local id = rawget(self, "id")
+            local __type = rawget(self, "__type")
+            local _await = rawget(self, "_await")
 
-    constructor = function()
-        self.list = {}
-    end,
+            local plugins = setmetatable({id = id, __type = __type, _await = _await}, client_plugin_rpc_mt)
+            rawset(self, "plugins", plugins) -- Caching
+            return plugins
+        end
 
-    add = function(entity: BaseEntity)
-        self.list[entity.id] = entity
-    end,
+        if key == "await" then
+            local id = rawget(self, "id")
+            local __type = rawget(self, "__type")
 
-    createByName = function(name: string)
-        return _G[name]()
-    end,
+            local await = setmetatable({id = id, __type = __type, _await = true}, client_rpc_mt)
+            rawset(self, "await", await) -- Caching
+            return await
+        end
 
-    remove = function(entity: BaseEntity)
-        self.list[entity.id] = nil
-    end,
 
-    get = function(id: number)
-        return self.list[id]
-    end,
+        local method = self.__type .. "." .. key
+    
+        local fn = function(...)
+            local n = select("#", ...)
 
-    getBy = function(key: string, value)
-        for _, entity in pairs(self.list) do
-            if type(value) == "function" then
-                if value(entity[key]) then
-                    return entity
+            if n == 0 then -- No args, so also no client id
+                error("${method} requires the client id as the first argument!", 2)
+            end
+
+            if n > 0 then
+                local first, second = ...
+                local selfCall = first and type(first) == self.__type and first.id == self.id
+                
+                local cid = selfCall and second or first
+                if type(cid) != "number" then
+                    error("${method} requires the client id as the first argument!", 2)
                 end
-            else
-                if entity[key] == value then
-                    return entity
+                
+                local hasAwait = rawget(self, "_await")
+
+                -- 3 and 2 because the first argument is the client id and should always be ignored
+                if hasAwait then
+                    -- Cant do selfCall and or since the first argument can be nil
+                    if selfCall then
+                        return Client.await[method](cid, self.id, select(3, ...))
+                    else
+                        return Client.await[method](cid, self.id, select(2, ...))
+                    end
+                else
+                    if selfCall then
+                        return Client[method](cid, self.id, select(3, ...))
+                    else
+                        return Client[method](cid, self.id, select(2, ...))
+                    end
                 end
             end
         end
-    end,
 
-    getAllBy = function(key: string, value)
-        return table.filter(self.list, function(_, entity)
-            if type(value) == "function" then
-                return value(entity[key])
-            else
-                return entity[key] == value
-            end
-        end)
+        rawset(self, key, fn) -- Caching
+        return fn
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register ${IsServer and 'server' or 'client'} methods from the ${IsServer and 'client' or 'server'}, please register them from the ${IsServer and 'server' or 'client'} using the rpc decorator!")
+    end
+}
+
+client_plugin_rpc_mt = {
+    __index = function(self, key)
+        -- Create a client_rpc_mt with the plugin name and add the plugin type
+        local proxy = setmetatable({
+            id = self.id,
+            __type = type(self) .. "." .. key,
+            plugins = self,
+            _await = rawget(self, "_await")
+        }, client_rpc_mt)
+
+        rawset(self, key, proxy) -- Caching
+        return proxy
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register ${IsServer and 'server' or 'client'} methods from the ${IsServer and 'client' or 'server'}, please register them from the ${IsServer and 'server' or 'client'} using the rpc decorator!")
     end
 }
 
@@ -66,7 +106,7 @@ class BaseEntity {
             for k,v in pairs(self.__plugins) do
                 local _plugin = _G[v]
 
-                -- Dont call the constructor (reduce useless calls,it will be skipped anyway)
+                -- Dont call the constructor (reduce useless calls, it will be skipped anyway)
                 _plugin.__skipNextConstructor = true
                 
                 -- We need to set it in the prototype since the rpc decorator is called before full object initialization
@@ -112,9 +152,10 @@ class BaseEntity {
         end
     end,
 
-    init = function(id, state)
+    init = function(id, state, client)
         self.id = id
         self.state = state
+        self.client = client
 
         if self.__listenedStates and next(self.__listenedStates) then
             local function onStateChange(listeners, value, initial)
@@ -166,8 +207,10 @@ class BaseEntity {
     end,
 
     create = function(coords: vector3, rotation: vector3 | nil, options = {})
+        local _type = type(self)
+
         if not self.model then
-            error("${type(self)}: trying to create entity without model, please use the model decorator to set the model")
+            error("${_type}: trying to create entity without model, please use the model decorator to set the model")
         end
 
         options.rotation = options.rotation or rotation
@@ -175,8 +218,9 @@ class BaseEntity {
 
         local id = UtilityNet.CreateEntity(self.model, coords, options)
         local state = UtilityNet.State(id)
+        local client = setmetatable({id = id, __type = _type}, client_rpc_mt)
 
-        self:init(id, state)
+        self:init(id, state, client)
         Entities:add(self)
         
         self:callOnAll("OnAwake")
@@ -184,5 +228,3 @@ class BaseEntity {
         self:callOnAll("AfterSpawn")
     end,
 }
-
-Entities = new EntitiesSingleton()

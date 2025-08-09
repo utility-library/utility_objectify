@@ -1,11 +1,8 @@
 -- v1.2
 IsServer = false
 IsClient = true
-Entities = nil
 
 local callbacksLoaded = false
-local callbacks = {["GetCallbacks"] = true}
-local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
 local function CombineHooks(self, methodName, beforeName, afterName)
     local before = self[beforeName]
@@ -19,32 +16,53 @@ local function CombineHooks(self, methodName, beforeName, afterName)
     end
 end
 
-local server_rpc_mt = {
+local server_rpc_mt, server_plugin_rpc_mt = nil -- hoisting
+server_rpc_mt = {
     __index = function(self, key)
-        return function(...)
-            local args = {...}
+        -- Create "plugins" at runtime, this reduce memory footprint
+        if key == "plugins" then
+            local id = rawget(self, "id")
+            local __type = rawget(self, "__type")
 
-            if type(args[1]) == self.__type and args[1].id == self.id then -- Is self
-                table.remove(args, 1)
-            end
-
-            return Server["${type(self)}.${key}"](self.id, table.unpack(args))
+            local plugins = setmetatable({id = id, __type = __type}, server_plugin_rpc_mt)
+            rawset(self, "plugins", plugins) -- Caching
+            return plugins
         end
+
+        local method = self.__type .. "." .. key
+
+        local fn = function(...)
+            local first = ... -- This will just assign the first argument
+            local selfCall = first and type(first) == self.__type and first.id == self.id
+
+            if selfCall then
+                return Server[method](self.id, select(2, ...))
+            else
+                return Server[method](self.id, ...)
+            end
+        end
+
+        rawset(self, key, fn) -- Caching
+        return fn
     end,
     __newindex = function(self, key, value)
         error("You can't register server methods from the client, please register them from the server using the rpc decorator!")
     end
 }
 
-local server_plugin_rpc_mt = {
+server_plugin_rpc_mt = {
     __index = function(self, key)
-        -- Create a server_rpc_mt with the plugin name and add the plugin type
-        return setmetatable({
+        -- Create a client_rpc_mt with the plugin name and add the plugin type
+        local proxy = setmetatable({
             id = self.id,
-            __type = type(self) .. "." .. key
+            __type = self.__type .. "." .. key
         }, server_rpc_mt)
+
+        rawset(self, key, proxy) -- Caching
+        return proxy
     end,
-    __newindex = function(self, key, value)
+
+    __newindex = function()
         error("You can't register server methods from the client, please register them from the server using the rpc decorator!")
     end
 }
@@ -60,8 +78,7 @@ class BaseEntity {
     end,
 
     _BeforeOnSpawn = function()
-        local plugins = setmetatable({id = self.id, __type = type(self)}, server_plugin_rpc_mt)
-        self.server = setmetatable({id = self.id, __type = type(self), plugins = plugins}, server_rpc_mt)
+        self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
 
         if not self.isPlugin then
             Entities:add(self)
@@ -109,56 +126,6 @@ class BaseEntity {
     end
 }
 
-class EntitiesSingleton {
-    list = {},
-
-    constructor = function()
-        self.list = {}
-    end,
-
-    add = function(entity: BaseEntity)
-        self.list[entity.id] = entity
-    end,
-
-    createByName = function(name: string)
-        return _G[name]()
-    end,
-
-    remove = function(entity: BaseEntity)
-        self.list[entity.id] = nil
-    end,
-
-    get = function(id: number)
-        return self.list[id]
-    end,
-
-    getBy = function(key: string, value)
-        for _, entity in pairs(self.list) do
-            if type(value) == "function" then
-                if value(entity[key]) then
-                    return entity
-                end
-            else
-                if entity[key] == value then
-                    return entity
-                end
-            end
-        end
-    end,
-
-    getAllBy = function(key: string, value)
-        return table.filter(self.list, function(_, entity)
-            if type(value) == "function" then
-                return value(entity[key])
-            else
-                return entity[key] == value
-            end
-        end)
-    end
-}
-
-Entities = new EntitiesSingleton()
-
 deepcopy = function(orig, copies)
     copies = copies or {}
 
@@ -182,142 +149,6 @@ deepcopy = function(orig, copies)
 
     setmetatable(copy, deepcopy(getmetatable(orig), copies))
     return copy
-end
-
--- Decorators
-function model(_class, model)
-    if type(model) == "table" then
-        local models = {}
-
-        for k,v in pairs(model) do
-            local c_class = deepcopy(_class)
-            models[v] = c_class
-
-            RegisterObjectScript(v, "main", c_class)
-            c_class.__prototype.model = v
-        end
-
-        _class.__models = models
-    elseif type(model) == "string" then
-        RegisterObjectScript(model, "main", _class)
-        _class.__prototype.model = model
-    end
-end
-
-function plugin(_class, plugin)
-    Citizen.CreateThread(function()
-        if _class.__models then
-            for model,_class in pairs(_class.__models) do
-                if _G[plugin].__prototype.OnPluginApply then
-                    _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-                end
-            
-                RegisterObjectScript(model, plugin, _G[plugin])
-            end
-        else
-            local model = _class.__prototype.model
-        
-            if _G[plugin].__prototype.OnPluginApply then
-                _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-            end
-        
-            RegisterObjectScript(model, plugin, _G[plugin])
-        end
-    end)
-end
-
-function state(self, fn, key, value)
-    if not self.listenedStates then
-        self.listenedStates = {}
-    end
-
-    if not self.listenedStates[key] then
-        self.listenedStates[key] = {}
-    end
-
-    table.insert(self.listenedStates[key], {
-        fn = fn,
-        value = value
-    })
-end
-
-function event(self, fn, key, ignoreRendering)
-    RegisterNetEvent(key)
-    AddEventHandler(key, function(...)
-        if ignoreRendering then
-            fn(...)
-        else
-            if AreObjectScriptsFullyLoaded(self.obj) then -- Only run if object is loaded
-                fn(...)
-            end
-        end
-    end)
-end
-
-function rpc_hasreturn(fn, _return)
-    local sig = leap.fsignature(fn)
-    return _return != nil ? _return : sig.has_return
-end
-
-function rpc_function(fn, _return)
-    local sig = leap.fsignature(fn)
-    _return = rpc_hasreturn(fn, _return)
-    
-    local name = namespace..sig.name
-
-    if not _return then
-        RegisterNetEvent(name)
-        AddEventHandler(name, function(...)
-            local a = {...}
-            if type(a[1]) == "string" and a[1]:sub(1, 2) == "cb" then
-                error("${sig.name}: You cannot call a standard rpc as a callback, please dont use `await`")
-            end
-            
-            fn(...)
-        end)
-    else
-        RegisterNetEvent(name)
-        AddEventHandler(name, function(id, ...)
-            if type(id) != "string" or id:sub(1, 2) != "cb" then
-                error("${sig.name}: You cannot call a callback as a standard rpc, please use `await`")
-            end
-
-            -- For make the return of lua works
-            local _cb = table.pack(fn(...))
-            
-            if _cb ~= nil then -- If the callback is not nil
-                TriggerServerEvent(name, id, _cb) -- Trigger the server event
-            end
-        end)
-    end
-end
-
-function rpc(fn, _return, c)
-    if _type(fn) == "function" then
-        rpc_function(fn, _return)
-    else
-        --[[ local class = fn
-        local fn = _return
-        local _return = c
-        
-        if not class is BaseEntity then
-            error("The rpc decorator on classes is only allowed to be used on classes that inherit from BaseEntity")
-        end
-
-        local sig = leap.fsignature(fn)
-        local className = type(class)
-
-        if not rpcEntities[className] then
-            rpcEntities[className] = {}
-        end
-
-        if not rpcEntities[className][sig.name] then
-            rpcEntities[className][sig.name] = true -- Set the rpc as exposed
-
-            -- Register global function that will handle "entity branching"
-            rpc_entity(className, fn, _return)
-        end ]]
-    end
 end
 
 -- RPC
@@ -367,7 +198,7 @@ Server = setmetatable({
     end
 }, {
     __index = function(self, key)
-        local name = namespace..key
+        local name = namespace.."Server:"..key
 
         return function(...)
             -- Wait that callbacks are loaded

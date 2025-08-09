@@ -101,6 +101,14 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
         developer(tag .. " ^6CreateInstances^0", "Creating instance ^4"..GetEntityArchetypeName(obj).."^0 > ^5"..script.name.."^0 for "..obj)
     end
 
+    -- This "mechanism" is similar to the server side, where is a little cleaner
+
+    if script.name ~= "main" then
+        -- We need to set it in the prototype since the rpc decorator is called before full object initialization
+        script.script.__prototype.isPlugin = true
+        script.script.__prototype.main = objectScripts[obj]["main"]
+    end
+
     local instance = new script.script()
 
     instance.state = UtilityNet.State(uNetId)
@@ -110,8 +118,13 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     if script.name ~= "main" then
         local main = objectScripts[obj]["main"]
 
+        -- Reset prototype for future object instantiations
+        script.script.__prototype.isPlugin = nil
+        script.script.__prototype.main = nil
+
+        -- Reset the values on this object instance
         instance.isPlugin = true
-        instance.main = main -- Register main instance in plugin
+        instance.main = main
 
         main.plugins[script.name] = instance -- Register plugin in main instance
     end

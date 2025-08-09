@@ -1,8 +1,106 @@
---@utility_objectify/server/entity.lua
-if not UtilityNet then
-    error("Please load the utility_lib before utility_objectify!")
+--BUILD @utility_objectify/shared/decorators.lua
+function model(_class, model, abstract)
+    if type(model) == "table" then
+        local models = {}
+
+        for k,v in pairs(model) do
+            local c_class = deepcopy(_class)
+            models[v] = c_class
+
+            c_class.__prototype.model = v
+            
+            if IsClient then
+                RegisterObjectScript(v, "main", c_class)
+            elseif IsServer then
+                c_class.__prototype.abstract = true
+            end
+        end
+
+        _class.__models = models
+    elseif type(model) == "string" then
+        _class.__prototype.model = model
+
+        if IsClient then
+            RegisterObjectScript(model, "main", _class)
+        elseif IsServer then
+            _class.__prototype.abstract = abstract
+        end
+    end
 end
 
+function plugin(_class, plugin)
+    if IsClient then
+        Citizen.CreateThread(function()
+            if _class.__models then
+                for model,_class in pairs(_class.__models) do
+                    if _G[plugin].__prototype.OnPluginApply then
+                        _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
+                    end
+                
+                    RegisterObjectScript(model, plugin, _G[plugin])
+                end
+            else
+                local model = _class.__prototype.model
+            
+                if _G[plugin].__prototype.OnPluginApply then
+                    _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
+                end
+            
+                RegisterObjectScript(model, plugin, _G[plugin])
+            end
+        end)
+    elseif IsServer then
+        if not _class.__prototype.__plugins then
+            _class.__prototype.__plugins = {}
+        end
+
+        if _class.__models then
+            for model,_class in pairs(_class.__models) do
+                table.insert(_class.__prototype.__plugins, plugin)
+            end
+        else
+            local model = _class.__prototype.model
+        
+            table.insert(_class.__prototype.__plugins, plugin)
+        end
+    end
+end
+
+function state(self, fn, key, value)
+    if not self.listenedStates then
+        self.listenedStates = {}
+    end
+
+    if not self.listenedStates[key] then
+        self.listenedStates[key] = {}
+    end
+
+    table.insert(self.listenedStates[key], {
+        fn = fn,
+        value = value
+    })
+end
+
+function event(self, fn, key, ignoreRendering)
+    RegisterNetEvent(key)
+    AddEventHandler(key, function(...)
+        if IsClient then
+            if ignoreRendering then
+                fn(...)
+            else
+                if AreObjectScriptsFullyLoaded(self.obj) then -- Only run if object is loaded
+                    fn(...)
+                end
+            end
+        elseif IsServer then
+            fn(...)
+        end
+    end)
+end
+
+------------------------------------
+
+--BUILD @utility_objectify/shared/entitiesSingleton.lua
 class EntitiesSingleton {
     list = {},
 
@@ -51,6 +149,309 @@ class EntitiesSingleton {
     end
 }
 
+Entities = new EntitiesSingleton()
+
+------------------------------------
+
+--BUILD @utility_objectify/shared/rpc.lua
+local exposedEntitiesRpcs = {} -- Used to store all class exposed rpcs
+local callbacks = {}
+local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
+
+if not IsDuplicityVersion() then
+    callbacks["GetCallbacks"] = true
+end
+
+local function rpc_hasreturn(fn, _return)
+    local sig = leap.fsignature(fn)
+    return _return != nil ? _return : sig.has_return
+end
+
+local function rpc_function(fn, _return)
+    local sig = leap.fsignature(fn)
+    _return = rpc_hasreturn(fn, _return)
+    local tag = IsServer and "Server" or "Client"
+
+    local name = namespace.."${tag}:"..sig.name
+
+    if not _return then
+        RegisterNetEvent(name)
+
+        if IsServer then
+            AddEventHandler(name, fn)
+        else
+            AddEventHandler(name, function(...)
+                local first = ...
+                if type(first) == "string" and first:sub(1, 2) == "cb" then
+                    error("${sig.name}: You cannot call a standard rpc as a callback, please dont use `await`")
+                end
+                
+                fn(...)
+            end)
+        end
+    else
+        callbacks[sig.name] = true
+
+        RegisterNetEvent(name)
+        AddEventHandler(name, function(id, ...)
+            if IsClient then
+                if type(id) != "string" or id:sub(1, 2) != "cb" then
+                    error("${sig.name}: You cannot call a callback as a standard rpc, please use `await`")
+                end
+            end
+
+            local source = source
+            
+            -- For make the return of lua works
+            local _cb = table.pack(fn(...))
+            
+            if _cb ~= nil then -- If the callback is not nil
+                if IsServer then
+                    TriggerClientEvent(name, source, id, _cb) -- Trigger the client event
+                else
+                    TriggerServerEvent(name, id, _cb) -- Trigger the server event
+                end
+            end
+        end)
+    end
+end
+
+local function checkRPCExposure(ogname, source, classLabel, methodName)
+    if not exposedEntitiesRpcs[classLabel] or not exposedEntitiesRpcs[classLabel][methodName] then
+        error("${ogname}(${source}): Class ${classLabel} doesn't expose ${methodName}")
+        return false
+    end
+
+    return true
+end
+
+local function callRPC(target, method, ...)
+    return target[method](target, ...)
+end
+
+local function rpc_entity(className, fn, _return)
+    local sig = leap.fsignature(fn)
+    local ogname = sig.name
+    sig.name =  className.."."..sig.name
+    
+    --[[
+    -- This function is used as a "global" function to expose a rpc to the other side for a specific class
+    -- The other side will pass as first argument the id of the entity and it will call the function in the object class
+    -- Example:
+    --   class Test extends BaseEntity {
+    --       @rpc()
+    --       test = function(a)
+    --           print("from client/server:", a)
+    --       end
+    --   }
+    --
+    --   When the other side calls the rpc this is the call stack:
+    --    other side: send call to Test.test (className:fn) passing as first argument the uNetId of the entity
+    --    this side: call a global function that will resolve the entity from the uNetId and call the appropriate function
+    --]]
+    local _fn = leap.registerfunc(function(id, ...)
+        local source = source or "SERVER"
+        local entity = Entities:getBy("id", id)
+        local tag = "${ogname}(${source})"
+
+        if not entity then
+            error("${tag}: Entity with id ${tostring(id)} does not exist")
+            return
+        end
+
+        local isPlugin = className:find("%.")
+        if isPlugin then -- RPC from a plugin
+            local _className, pluginName = className:match("(.*)%.(.*)")
+
+            if not entity.plugins or not entity.plugins[pluginName] then
+                error("${tag}: Entity with id ${tostring(id)} has no plugin ${pluginName}")
+                return
+            end
+
+            if type(entity) ~= _className then
+                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
+                return
+            end
+
+            local plugin = entity.plugins[pluginName]
+            if not plugin[ogname] then
+                error("${tag}: Class ${className} doesnt define ${ogname}")
+                return
+            end
+
+            if checkRPCExposure(ogname, source, className, ogname) then
+                return callRPC(plugin, ogname, ...)
+            end
+        else
+            if type(entity) ~= className then
+                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
+                return
+            end
+
+            if not entity[ogname] then
+                error("${tag}: Class ${className} doesnt define ${ogname}")
+                return
+            end
+
+            if checkRPCExposure(ogname, source, className, ogname) then
+                return callRPC(entity, ogname, ...)
+            end
+        end
+    end, sig)
+
+    rpc_function(_fn, _return)
+
+    if IsServer then
+        if rpc_hasreturn(fn, _return) then
+            TriggerClientEvent(namespace.."RegisterCallback", -1, sig.name) -- Register the callback on runtime for connected clients!
+        end
+    end
+
+    sig.name = ogname
+end
+
+function rpc(fn, _return, c)
+    if _type(fn) == "function" then
+        rpc_function(fn, _return)
+    else
+        local class = fn
+        local fn = _return
+        local _return = c
+        
+        if not class is BaseEntity then
+            error("The rpc decorator on classes is only allowed to be used on classes that inherit from BaseEntity")
+        end
+
+        local sig = leap.fsignature(fn)
+
+        local className = nil
+
+        if class.isPlugin then
+            className = type(class.main) .. "." .. type(class)
+        else
+            className = type(class)
+        end
+        
+        if not exposedEntitiesRpcs[className] then
+            exposedEntitiesRpcs[className] = {}
+        end
+
+        if not exposedEntitiesRpcs[className][sig.name] then
+            exposedEntitiesRpcs[className][sig.name] = true -- Set the rpc as exposed
+
+            -- Register global function that will handle "entity branching"
+            rpc_entity(className, fn, _return)
+        end
+    end
+end
+
+function srpc(fn, _return, c)
+    if IsServer then
+        rpc(fn, _return, c)
+    end
+end
+
+function crpc(fn, _return, c)
+    if IsClient then
+        rpc(fn, _return, c)
+    end
+end
+
+------------------------------------
+
+--BUILD @utility_objectify/server/entity.lua
+if not UtilityNet then
+    error("Please load the utility_lib before utility_objectify!")
+end
+
+local client_rpc_mt, client_plugin_rpc_mt = nil -- hoisting
+client_rpc_mt = {
+    __index = function(self, key)
+        -- Create "plugins" and "await" at runtime, this reduce memory footprint
+        if key == "plugins" then
+            local id = rawget(self, "id")
+            local __type = rawget(self, "__type")
+            local _await = rawget(self, "_await")
+
+            local plugins = setmetatable({id = id, __type = __type, _await = _await}, client_plugin_rpc_mt)
+            rawset(self, "plugins", plugins) -- Caching
+            return plugins
+        end
+
+        if key == "await" then
+            local id = rawget(self, "id")
+            local __type = rawget(self, "__type")
+
+            local await = setmetatable({id = id, __type = __type, _await = true}, client_rpc_mt)
+            rawset(self, "await", await) -- Caching
+            return await
+        end
+
+
+        local method = self.__type .. "." .. key
+    
+        local fn = function(...)
+            local n = select("#", ...)
+
+            if n == 0 then -- No args, so also no client id
+                error("${method} requires the client id as the first argument!", 2)
+            end
+
+            if n > 0 then
+                local first, second = ...
+                local selfCall = first and type(first) == self.__type and first.id == self.id
+                
+                local cid = selfCall and second or first
+                if type(cid) != "number" then
+                    error("${method} requires the client id as the first argument!", 2)
+                end
+                
+                local hasAwait = rawget(self, "_await")
+
+                -- 3 and 2 because the first argument is the client id and should always be ignored
+                if hasAwait then
+                    -- Cant do selfCall and or since the first argument can be nil
+                    if selfCall then
+                        return Client.await[method](cid, self.id, select(3, ...))
+                    else
+                        return Client.await[method](cid, self.id, select(2, ...))
+                    end
+                else
+                    if selfCall then
+                        return Client[method](cid, self.id, select(3, ...))
+                    else
+                        return Client[method](cid, self.id, select(2, ...))
+                    end
+                end
+            end
+        end
+
+        rawset(self, key, fn) -- Caching
+        return fn
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register ${IsServer and 'server' or 'client'} methods from the ${IsServer and 'client' or 'server'}, please register them from the ${IsServer and 'server' or 'client'} using the rpc decorator!")
+    end
+}
+
+client_plugin_rpc_mt = {
+    __index = function(self, key)
+        -- Create a client_rpc_mt with the plugin name and add the plugin type
+        local proxy = setmetatable({
+            id = self.id,
+            __type = type(self) .. "." .. key,
+            plugins = self,
+            _await = rawget(self, "_await")
+        }, client_rpc_mt)
+
+        rawset(self, key, proxy) -- Caching
+        return proxy
+    end,
+    __newindex = function(self, key, value)
+        error("You can't register ${IsServer and 'server' or 'client'} methods from the ${IsServer and 'client' or 'server'}, please register them from the ${IsServer and 'server' or 'client'} using the rpc decorator!")
+    end
+}
+
 @skipSerialize({"plugins", "id", "state", "main", "isPlugin"})
 class BaseEntity {
     id = nil,
@@ -67,7 +468,7 @@ class BaseEntity {
             for k,v in pairs(self.__plugins) do
                 local _plugin = _G[v]
 
-                -- Dont call the constructor (reduce useless calls,it will be skipped anyway)
+                -- Dont call the constructor (reduce useless calls, it will be skipped anyway)
                 _plugin.__skipNextConstructor = true
                 
                 -- We need to set it in the prototype since the rpc decorator is called before full object initialization
@@ -113,9 +514,10 @@ class BaseEntity {
         end
     end,
 
-    init = function(id, state)
+    init = function(id, state, client)
         self.id = id
         self.state = state
+        self.client = client
 
         if self.__listenedStates and next(self.__listenedStates) then
             local function onStateChange(listeners, value, initial)
@@ -167,8 +569,10 @@ class BaseEntity {
     end,
 
     create = function(coords: vector3, rotation: vector3 | nil, options = {})
+        local _type = type(self)
+
         if not self.model then
-            error("${type(self)}: trying to create entity without model, please use the model decorator to set the model")
+            error("${_type}: trying to create entity without model, please use the model decorator to set the model")
         end
 
         options.rotation = options.rotation or rotation
@@ -176,8 +580,9 @@ class BaseEntity {
 
         local id = UtilityNet.CreateEntity(self.model, coords, options)
         local state = UtilityNet.State(id)
+        local client = setmetatable({id = id, __type = _type}, client_rpc_mt)
 
-        self:init(id, state)
+        self:init(id, state, client)
         Entities:add(self)
         
         self:callOnAll("OnAwake")
@@ -186,183 +591,17 @@ class BaseEntity {
     end,
 }
 
-Entities = new EntitiesSingleton()
-
 ------------------------------------
 
---@utility_objectify/server/framework.lua
+--BUILD @utility_objectify/server/framework.lua
 -- v1.1
 IsServer = true
 IsClient = false
-
-local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
-local callbacks = {}
-
-local exposedEntitiesRpcs = {} -- Used to store all class exposed rpcs
-
-function rpc_hasreturn(fn, _return)
-    local sig = leap.fsignature(fn)
-    return _return != nil ? _return : sig.has_return
-end
-
-function rpc_function(fn, _return)
-    local sig = leap.fsignature(fn)
-    _return = rpc_hasreturn(fn, _return)
-    
-    local name = namespace..sig.name
-
-    if not _return then
-        RegisterNetEvent(name)
-        AddEventHandler(name, fn)
-    else
-        callbacks[sig.name] = true
-
-        RegisterNetEvent(name)
-        AddEventHandler(name, function(id, ...)
-            local source = source
-            
-            -- For make the return of lua works
-            local _cb = table.pack(fn(...))
-            
-            if _cb ~= nil then -- If the callback is not nil
-                TriggerClientEvent(name, source, id, _cb) -- Trigger the client event
-            end
-        end)
-    end
-end
-
-local function checkRPCExposure(ogname, source, classLabel, methodName)
-    if not exposedEntitiesRpcs[classLabel] or not exposedEntitiesRpcs[classLabel][methodName] then
-        error("${ogname}(${source}): Class ${classLabel} doesn't expose ${methodName}")
-        return false
-    end
-
-    return true
-end
-
-local function callRPC(target, method, ...)
-    return target[method](target, ...)
-end
-
-function rpc_entity(className, fn, _return)
-    local sig = leap.fsignature(fn)
-    local ogname = sig.name
-    sig.name =  className.."."..sig.name
-    
-    --[[
-    -- This function is used as a "global" function to expose a rpc to the client for a specific class
-    -- Clients will pass as first argument the id of the entity and it will call the function in the object class
-    -- Example:
-    --   class Test extends BaseEntity {
-    --       @rpc()
-    --       test = function(a)
-    --           print("from client:", a)
-    --       end
-    --   }
-    --
-    --   When the client calls the rpc this is the call stack:
-    --    client: send call to Test.test (className:fn) passing as first argument the uNetId of the entity
-    --    server: call a global function that will resolve the entity from the uNetId and call the appropriate function
-    --]]
-    local _fn = leap.registerfunc(function(id, ...)
-        local source = source
-        local entity = Entities:getBy("id", id)
-        local tag = "${ogname}(${source})"
-
-        if not entity then
-            error("${tag}: Entity with id ${tostring(id)} does not exist")
-            return
-        end
-
-        local isPlugin = className:find("%.")
-        if isPlugin then -- RPC from a plugin
-            local _className, pluginName = className:match("(.*)%.(.*)")
-
-            if not entity.plugins or not entity.plugins[pluginName] then
-                error("${tag}: Entity with id ${tostring(id)} has no plugin ${pluginName}")
-                return
-            end
-
-            if type(entity) ~= _className then
-                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
-                return
-            end
-
-            local plugin = entity.plugins[pluginName]
-            if not plugin[ogname] then
-                error("${tag}: Class ${className} doesnt define ${ogname}")
-                return
-            end
-
-            if checkRPCExposure(ogname, source, className, ogname) then
-                return callRPC(plugin, ogname, ...)
-            end
-        else
-            if type(entity) ~= className then
-                error("${tag}: Entity with id ${tostring(id)} is not a ${className}")
-                return
-            end
-
-            if not entity[ogname] then
-                error("${tag}: Class ${className} doesnt define ${ogname}")
-                return
-            end
-
-            if checkRPCExposure(ogname, source, className, ogname) then
-                return callRPC(entity, ogname, ...)
-            end
-        end
-    end, sig)
-
-    rpc_function(_fn, _return)
-
-    if rpc_hasreturn(fn, _return) then
-        TriggerClientEvent(namespace.."RegisterCallback", -1, sig.name) -- Register the callback on runtime for connected clients!
-    end
-
-    sig.name = ogname
-end
-
-function rpc(fn, _return, c)
-    if _type(fn) == "function" then
-        rpc_function(fn, _return)
-    else
-        local class = fn
-        local fn = _return
-        local _return = c
-        
-        if not class is BaseEntity then
-            error("The rpc decorator on classes is only allowed to be used on classes that inherit from BaseEntity")
-        end
-
-        local sig = leap.fsignature(fn)
-
-        local className = nil
-
-        if class.isPlugin then
-            className = type(class.main) .. "." .. type(class)
-        else
-            className = type(class)
-        end
-        
-        if not exposedEntitiesRpcs[className] then
-            exposedEntitiesRpcs[className] = {}
-        end
-
-        if not exposedEntitiesRpcs[className][sig.name] then
-            exposedEntitiesRpcs[className][sig.name] = true -- Set the rpc as exposed
-
-            -- Register global function that will handle "entity branching"
-            rpc_entity(className, fn, _return)
-        end
-    end
-end
 
 @rpc(true)
 function GetCallbacks()
     return callbacks
 end
-
 
 function GenerateCallbackId()
     return "cb"..GetHashKey(tostring(math.random()) .. GetGameTimer())
@@ -395,7 +634,7 @@ end
 
 local await = setmetatable({}, {
     __index = function(self, key)
-        local name = namespace..key
+        local name = namespace.."Client:"..key
 
         return function(cid: number, ...)
             local id = GenerateCallbackId()
@@ -409,7 +648,7 @@ local await = setmetatable({}, {
 
 Client = setmetatable({}, {
     __index = function(self, key)
-        local name = namespace..key
+        local name = namespace.."Client:"..key
 
         if key == "await" then
             return await
@@ -420,57 +659,6 @@ Client = setmetatable({}, {
         end
     end,
 })
-
-------
-
-function model(_class, model, abstract)
-    if type(model) == "table" then
-        local models = {}
-
-        for k,v in pairs(model) do
-            local c_class = table.deepcopy(_class)
-            models[v] = c_class
-
-            c_class.__prototype.model = v
-            c_class.__prototype.abstract = true
-        end
-
-        _class.__models = models
-    elseif type(model) == "string" then
-        _class.__prototype.model = model
-        _class.__prototype.abstract = abstract
-    end
-end
-
-function plugin(_class, plugin)
-    if not _class.__prototype.__plugins then
-        _class.__prototype.__plugins = {}
-    end
-
-    table.insert(_class.__prototype.__plugins, plugin)
-end
-
-function state(self, fn, key, value)
-        if not self.__listenedStates then
-        self.__listenedStates = {}
-    end
-
-    if not self.__listenedStates[key] then
-        self.__listenedStates[key] = {}
-    end
-
-    table.insert(self.__listenedStates[key], {
-        fn = fn,
-        value = value
-    })
-end
-
-function event(_class, fn, key)
-    RegisterNetEvent(key)
-    AddEventHandler(key, function(...)
-        fn(...)
-    end)
-end
 
 ------------------------------------
 
