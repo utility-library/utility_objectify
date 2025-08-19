@@ -672,6 +672,12 @@ local function CreateTempObjectAndCallMethod(uNetId, model, method, ...)
     end
 end
 
+local function CallOnRegister(uNetId, model, coords, rotation)
+    registeredObjects[uNetId] = promise.new()
+    CreateTempObjectAndCallMethod(uNetId, model, "OnRegister", coords, rotation)
+    registeredObjects[uNetId]:resolve(true)
+end
+
 local function CreateObjectScriptInstance(obj, scriptIndex, source)
     local model = GetEntityModel(obj)
     local uNetId = UtilityNet.GetUNetIdFromEntity(obj)
@@ -1033,11 +1039,14 @@ UtilityNet.OnRender(function(id, obj, model)
     end
 
     if objectScripts[obj] then
+        warn("Skipping render of "..id.." since it already has some registered scripts")
         return
     end
 
-    while not registeredObjects[id] do -- Wait that OnRegister is properly called before OnAwake and etc (order of calls is important)
-        Citizen.Wait(0)
+    if not registeredObjects[id] then
+        CallOnRegister(id, model, GetEntityCoords(obj), GetEntityRotation(obj))
+    else
+        Citizen.Await(registeredObjects[id])
     end
 
     local created = CreateObjectScriptsInstances(obj)
@@ -1074,37 +1083,32 @@ UtilityNet.OnUnrender(function(id, obj, model)
     DeleteEntity(obj)
 end)
 
-RegisterNetEvent("Utility:Net:EntityCreated", function(_, object)
-    while not UtilityNet.DoesUNetIdExist(object.id) do
-        Citizen.Wait(0)
+RegisterNetEvent("Utility:Net:EntityCreated", function(_, uNetId, model, coords, rotation)
+    if registeredObjects[uNetId] then
+        return
     end
 
-    CreateTempObjectAndCallMethod(object.id, object.model, "OnRegister")
-    registeredObjects[object.id] = true
+    rotation = rotation or vec3(0, 0, 0)
+    CallOnRegister(uNetId, model, coords, rotation)
 end)
 
-RegisterNetEvent("Utility:Net:RequestDeletion", function(uNetId)
+RegisterNetEvent("Utility:Net:RequestDeletion", function(uNetId, model, coords, rotation)
+    rotation = rotation or vec3(0, 0, 0)
+
     registeredObjects[uNetId] = nil
-
-    local model = GetEntityModel(UtilityNet.GetEntityFromUNetId(uNetId))
-    if model then
-        CreateTempObjectAndCallMethod(uNetId, model, "OnUnregister")
-    else
-        warn("OnUnregister: model not found for uNetId "..tostring(uNetId))
-    end
-
+    CreateTempObjectAndCallMethod(uNetId, model, "OnUnregister", coords, rotation)
     tempObjectsProperties[uNetId] = nil -- Clear all temp properties on deletion (always)
 end)
 
 Citizen.CreateThread(function()
-    local sliced = UtilityNet.GetEntities()
+    local entities = UtilityNet.GetServerEntities({
+        where = {createdBy = resource},
+        select = {"id", "model", "coords", "options"}
+    })
 
-    for slice, entities in pairs(sliced) do
-        for uNetId,v in pairs(entities) do
-            if v.createdBy == resource then
-                CreateTempObjectAndCallMethod(uNetId, v.model, "OnRegister")
-                registeredObjects[uNetId] = true
-            end
+    for _, entity in pairs(entities) do
+        if not registeredObjects[entity.id] then
+            CallOnRegister(entity.id, entity.model, entity.coords, entity.options.rotation)
         end
     end
 end)
