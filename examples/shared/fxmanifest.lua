@@ -4,7 +4,7 @@ game 'gta5'
 
 client_scripts {
     "@utility_lib/client/native.lua",
-    "@utility_objectify/shared/api.lua",
+    "@utility_objectify/build/shared/api.lua",
     "shared/functions/*.lua",
     "shared/objects/**.lua",
     "shared/main.lua",
@@ -12,7 +12,7 @@ client_scripts {
 
 server_scripts {
     "@utility_lib/server/native.lua",
-    "@utility_objectify/shared/api.lua",
+    "@utility_objectify/build/shared/api.lua",
     "shared/functions/*.lua",
     "shared/objects/**.lua",
     "shared/main.lua",
