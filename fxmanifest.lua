@@ -15,5 +15,5 @@ files {
     "build/shared/api.lua"
 }
 
-dependency "leap3"
+dependency "leap"
 lua54 "yes"
