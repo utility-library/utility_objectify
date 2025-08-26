@@ -1,4 +1,4 @@
-@model("v_res_m_lampstand")
+@model("prop_cd_lamp")
 @plugin("interactable")
 class Lamp extends BaseEntity {
     OnSpawn = function()

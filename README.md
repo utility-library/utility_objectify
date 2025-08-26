@@ -51,8 +51,8 @@ class MyEntity extends BaseEntity {
    ```
 3. In the manifest of your choosen resource, add the following line:
    ```lua
-    client_script "@utility_objectify/client/api.lua
-    server_script "@utility_objectify/server/api.lua
+    client_script "@utility_objectify/build/client/api.lua
+    server_script "@utility_objectify/build/server/api.lua
     ```
 
 ## 🔗 **Vendorizing**

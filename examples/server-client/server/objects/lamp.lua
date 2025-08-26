@@ -1,4 +1,4 @@
-@model("v_res_m_lampstand")
+@model("prop_cd_lamp")
 class Lamp extends BaseEntity {
     @rpc -- RPC suppports return values!
     SetLampState = function(state)
