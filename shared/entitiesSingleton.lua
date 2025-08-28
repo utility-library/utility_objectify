@@ -36,13 +36,21 @@ class EntitiesSingleton {
     end,
 
     getAllBy = function(key: string, value)
-        return table.filter(self.list, function(_, entity)
+        local ret = {}
+
+        for k,v in pairs(self.list) do
             if type(value) == "function" then
-                return value(entity[key])
+                if value(v[key]) then
+                    table.insert(ret, v)
+                end
             else
-                return entity[key] == value
+                if v[key] == value then
+                    table.insert(ret, v)
+                end
             end
-        end)
+        end
+
+        return ret
     end
 }
 
