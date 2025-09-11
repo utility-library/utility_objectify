@@ -1,22 +1,21 @@
 --BUILD @utility_objectify/shared/decorators.lua
 function model(_class, model, abstract)
     if type(model) == "table" then
-        local models = {}
-
         for k,v in pairs(model) do
-            local c_class = deepcopy(_class)
-            models[v] = c_class
-
-            c_class.__prototype.model = v
-            
             if IsClient then
-                RegisterObjectScript(v, "main", c_class)
+                RegisterObjectScript(v, "main", _class)
             elseif IsServer then
-                c_class.__prototype.abstract = true
+                _class.__prototype[v] = function(...)
+                    _class.__prototype.model = v
+                    local obj = new _class(...)
+                    _class.__prototype.model = nil
+
+                    return obj
+                end
             end
         end
 
-        _class.__models = models
+        _class.__models = model
     elseif type(model) == "string" then
         _class.__prototype.model = model
 
@@ -31,21 +30,16 @@ end
 function plugin(_class, plugin)
     if IsClient then
         Citizen.CreateThread(function()
+            if _G[plugin].__prototype.OnPluginApply then
+                _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
+            end
+
             if _class.__models then
-                for model,_class in pairs(_class.__models) do
-                    if _G[plugin].__prototype.OnPluginApply then
-                        _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-                    end
-                
+                for _,model in pairs(_class.__models) do
                     RegisterObjectScript(model, plugin, _G[plugin])
                 end
             else
                 local model = _class.__prototype.model
-            
-                if _G[plugin].__prototype.OnPluginApply then
-                    _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-                end
-            
                 RegisterObjectScript(model, plugin, _G[plugin])
             end
         end)
@@ -54,15 +48,7 @@ function plugin(_class, plugin)
             _class.__prototype.__plugins = {}
         end
 
-        if _class.__models then
-            for model,_class in pairs(_class.__models) do
-                table.insert(_class.__prototype.__plugins, plugin)
-            end
-        else
-            local model = _class.__prototype.model
-        
-            table.insert(_class.__prototype.__plugins, plugin)
-        end
+        table.insert(_class.__prototype.__plugins, plugin)
     end
 end
 
@@ -121,6 +107,21 @@ class EntitiesSingleton {
     end,
 
     get = function(id: number)
+        return self.list[id]
+    end,
+
+    waitFor = function(id: number, timeout: number = 5000)
+        local start = GetGameTimer()
+
+        while not self.list[id] do
+            if GetGameTimer() - start > timeout then
+                throw new Error("${type(self)}: Child ${childId} not found after ${timeout}ms, skipping")
+                return nil
+            end
+
+            Wait(0)
+        end
+
         return self.list[id]
     end,
 
@@ -386,7 +387,7 @@ local function CombineHooks(self, methodName, beforeName, afterName)
     end
 end
 
-local server_rpc_mt, server_plugin_rpc_mt = nil -- hoisting
+local server_rpc_mt, server_plugin_rpc_mt, children_mt = nil -- hoisting
 server_rpc_mt = {
     __index = function(self, key)
         -- Create "plugins" at runtime, this reduce memory footprint
@@ -437,9 +438,74 @@ server_plugin_rpc_mt = {
     end
 }
 
+children_mt = {
+    __mode = "v",
+
+    getEntity = function(self, name)
+        if not self._state.children then
+            return nil
+        end
+
+        if not self._state.children[name] then
+            return nil
+        end
+
+        local entity = Entities:waitFor(self._state.children[name])
+        entity.parent = self._parent
+
+        return entity
+    end,
+
+    __pairs = function(self)
+        if not self._state.children then
+            return function() end
+        end
+
+        local meta = getmetatable(self)
+
+        return function(t, k)
+            local k,v = next(self._state.children, k)
+            if not v or not k then return nil end
+
+            local entity = meta.getEntity(self, k)
+
+            if entity then
+                return k, entity
+            end
+        end
+    end,
+
+    __tostring = function(self)
+        if not self._state.children then
+            return "[]"
+        end
+
+        return json.encode(self._state.children)
+    end,
+
+    __ipairs = function(self)
+        local meta = getmetatable(self)
+        return meta.__pairs(self)
+    end,
+
+    __len = function(self)
+        if not self._state.children then
+            return 0
+        end
+
+        return #self._state.children
+    end,
+
+    __index = function(self, key)
+        local meta = getmetatable(self)
+        return meta.getEntity(self, key)
+    end
+}
+
 @skipSerialize({"main", "isPlugin", "plugins", "server", "listenedStates"})
 class BaseEntity {
     server = nil,
+    children = nil,
     __stateChangeHandler = nil,
 
     constructor = function()
@@ -449,6 +515,7 @@ class BaseEntity {
 
     _BeforeOnSpawn = function()
         self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
+        self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if not self.isPlugin then
             Entities:add(self)
@@ -493,33 +560,60 @@ class BaseEntity {
         if not self.isPlugin then
             Entities:remove(self)
         end
+    end,
+
+    getChild = function(path: string)
+        if path:find("/") then
+            local child = self
+
+            for str in path:gmatch("([^/]+)") do
+                if not child or not child.children then
+                    return nil
+                end
+
+                child = child.children[str]
+            end
+
+            return child
+        end
+
+        return self.children[path]
+    end,
+
+    getChildBy = function(key: string, value)
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    return child
+                end
+            else
+                if child[key] == value then
+                    return child
+                end
+            end
+        end
+
+        return nil
+    end,
+
+    getChildrenBy = function(key: string, value)
+        local children = {}
+
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    children[name] = child
+                end
+            else
+                if child[key] == value then
+                    children[name] = child
+                end
+            end
+        end
+
+        return children
     end
 }
-
-deepcopy = function(orig, copies)
-    copies = copies or {}
-
-    if _type(orig) ~= 'table' then
-        return orig
-    elseif copies[orig] then
-        return copies[orig]
-    end
-
-    local copy = {}
-    copies[orig] = copy
-
-    for k, v in next, orig, nil do
-        local key_copy = deepcopy(k, copies)
-        if type(k) == 'string' and k:sub(1, 5) == "_leap" then
-            copy[key_copy] = v -- copy by reference
-        else
-            copy[key_copy] = deepcopy(v, copies)
-        end
-    end
-
-    setmetatable(copy, deepcopy(getmetatable(orig), copies))
-    return copy
-end
 
 -- RPC
 local disableTimeoutNext = false
@@ -725,6 +819,7 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     instance.state = UtilityNet.State(uNetId)
     instance.id = uNetId
     instance.obj = obj
+    instance.model = GetEntityArchetypeName(obj)
 
     if script.name ~= "main" then
         local main = objectScripts[obj]["main"]

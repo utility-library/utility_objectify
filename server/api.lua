@@ -1,22 +1,21 @@
 --BUILD @utility_objectify/shared/decorators.lua
 function model(_class, model, abstract)
     if type(model) == "table" then
-        local models = {}
-
         for k,v in pairs(model) do
-            local c_class = deepcopy(_class)
-            models[v] = c_class
-
-            c_class.__prototype.model = v
-            
             if IsClient then
-                RegisterObjectScript(v, "main", c_class)
+                RegisterObjectScript(v, "main", _class)
             elseif IsServer then
-                c_class.__prototype.abstract = true
+                _class.__prototype[v] = function(...)
+                    _class.__prototype.model = v
+                    local obj = new _class(...)
+                    _class.__prototype.model = nil
+
+                    return obj
+                end
             end
         end
 
-        _class.__models = models
+        _class.__models = model
     elseif type(model) == "string" then
         _class.__prototype.model = model
 
@@ -31,21 +30,16 @@ end
 function plugin(_class, plugin)
     if IsClient then
         Citizen.CreateThread(function()
+            if _G[plugin].__prototype.OnPluginApply then
+                _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
+            end
+
             if _class.__models then
-                for model,_class in pairs(_class.__models) do
-                    if _G[plugin].__prototype.OnPluginApply then
-                        _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-                    end
-                
+                for _,model in pairs(_class.__models) do
                     RegisterObjectScript(model, plugin, _G[plugin])
                 end
             else
                 local model = _class.__prototype.model
-            
-                if _G[plugin].__prototype.OnPluginApply then
-                    _G[plugin].__prototype.OnPluginApply({}, _class.__prototype)
-                end
-            
                 RegisterObjectScript(model, plugin, _G[plugin])
             end
         end)
@@ -54,15 +48,7 @@ function plugin(_class, plugin)
             _class.__prototype.__plugins = {}
         end
 
-        if _class.__models then
-            for model,_class in pairs(_class.__models) do
-                table.insert(_class.__prototype.__plugins, plugin)
-            end
-        else
-            local model = _class.__prototype.model
-        
-            table.insert(_class.__prototype.__plugins, plugin)
-        end
+        table.insert(_class.__prototype.__plugins, plugin)
     end
 end
 
@@ -121,6 +107,21 @@ class EntitiesSingleton {
     end,
 
     get = function(id: number)
+        return self.list[id]
+    end,
+
+    waitFor = function(id: number, timeout: number = 5000)
+        local start = GetGameTimer()
+
+        while not self.list[id] do
+            if GetGameTimer() - start > timeout then
+                throw new Error("${type(self)}: Child ${childId} not found after ${timeout}ms, skipping")
+                return nil
+            end
+
+            Wait(0)
+        end
+
         return self.list[id]
     end,
 
@@ -460,19 +461,28 @@ client_plugin_rpc_mt = {
     end
 }
 
-@skipSerialize({"plugins", "id", "state", "main", "isPlugin"})
+-- Use always the same reference and create a new table only if needed, this reduce memory footprint
+local EMPTY_PLUGINS = {}
+local EMPTY_CHILDREN = {}
+
+@skipSerialize({"plugins", "children", "parent", "id", "state", "main", "isPlugin"})
 class BaseEntity {
     id = nil,
     state = nil,
     main = nil,
+    parent = nil,
 
     constructor = function(coords: vector3 | nil, rotation: vector3 | nil, options = {})
         if self.isPlugin then
             return
         end
 
+        self.children = EMPTY_CHILDREN
+        self.plugins = EMPTY_PLUGINS
+
         if self.__plugins then
             self.plugins = {}
+
             for k,v in pairs(self.__plugins) do
                 local _plugin = _G[v]
 
@@ -594,9 +604,118 @@ class BaseEntity {
         Entities:add(self)
         
         self:callOnAll("OnAwake")
-        self:callOnAll("OnSpawn")
+
+        -- Give time to the children to be added
+        Citizen.SetTimeout(1, function()
+            self:callOnAll("OnSpawn")
+        end)
+
         self:callOnAll("AfterSpawn")
     end,
+
+    addChild = function(name: string, child: BaseEntity)
+        if not child.id then
+            error("${type(self)}: trying to add a child that hasnt been created yet")
+        end
+
+        local exist = table.find(self.children, child)
+        if exist then
+            return
+        end
+        
+        local _root = self        
+        while _root.parent do
+            _root = _root.parent
+        end
+        
+        child.parent = self
+        child.root = _root
+
+        if self.children == EMPTY_CHILDREN then
+            self.children = {}
+        end
+
+        self.children[name] = child
+
+        if not self.state.children then
+            self.state.children = {[name] = child.id}
+        else
+            self.state.children[name] = child.id
+        end
+    end,
+
+    removeChild = function(childOrName: BaseEntity | string)
+        if type(childOrName) == "string" then
+            self.children[childOrName] = nil
+            self.state.children[childOrName] = nil
+        else
+            for name, child in pairs(self.children) do
+                if child == childOrName then
+                    self.children[name] = nil
+                    break
+                end
+            end
+            
+            for name, id in pairs(self.state.children) do
+                if id == childOrName.id then
+                    self.state.children[name] = nil
+                    break
+                end
+            end
+        end
+    end,
+
+    getChild = function(path: string)
+        if path:find("/") then
+            local child = self
+
+            for str in path:gmatch("([^/]+)") do
+                if not child or not child.children then
+                    return nil
+                end
+
+                child = child.children[str]
+            end
+
+            return child
+        end
+
+        return self.children[path]
+    end,
+
+    getChildBy = function(key: string, value)
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    return child
+                end
+            else
+                if child[key] == value then
+                    return child
+                end
+            end
+        end
+
+        return nil
+    end,
+
+    getChildrenBy = function(key: string, value)
+        local children = {}
+
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    children[name] = child
+                end
+            else
+                if child[key] == value then
+                    children[name] = child
+                end
+            end
+        end
+
+        return children
+    end
 }
 
 ------------------------------------
