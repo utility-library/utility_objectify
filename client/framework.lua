@@ -16,7 +16,7 @@ local function CombineHooks(self, methodName, beforeName, afterName)
     end
 end
 
-local server_rpc_mt, server_plugin_rpc_mt = nil -- hoisting
+local server_rpc_mt, server_plugin_rpc_mt, children_mt = nil -- hoisting
 server_rpc_mt = {
     __index = function(self, key)
         -- Create "plugins" at runtime, this reduce memory footprint
@@ -67,9 +67,74 @@ server_plugin_rpc_mt = {
     end
 }
 
+children_mt = {
+    __mode = "v",
+
+    getEntity = function(self, name)
+        if not self._state.children then
+            return nil
+        end
+
+        if not self._state.children[name] then
+            return nil
+        end
+
+        local entity = Entities:waitFor(self._state.children[name])
+        entity.parent = self._parent
+
+        return entity
+    end,
+
+    __pairs = function(self)
+        if not self._state.children then
+            return function() end
+        end
+
+        local meta = getmetatable(self)
+
+        return function(t, k)
+            local k,v = next(self._state.children, k)
+            if not v or not k then return nil end
+
+            local entity = meta.getEntity(self, k)
+
+            if entity then
+                return k, entity
+            end
+        end
+    end,
+
+    __tostring = function(self)
+        if not self._state.children then
+            return "[]"
+        end
+
+        return json.encode(self._state.children)
+    end,
+
+    __ipairs = function(self)
+        local meta = getmetatable(self)
+        return meta.__pairs(self)
+    end,
+
+    __len = function(self)
+        if not self._state.children then
+            return 0
+        end
+
+        return #self._state.children
+    end,
+
+    __index = function(self, key)
+        local meta = getmetatable(self)
+        return meta.getEntity(self, key)
+    end
+}
+
 @skipSerialize({"main", "isPlugin", "plugins", "server", "listenedStates"})
 class BaseEntity {
     server = nil,
+    children = nil,
     __stateChangeHandler = nil,
 
     constructor = function()
@@ -79,6 +144,7 @@ class BaseEntity {
 
     _BeforeOnSpawn = function()
         self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
+        self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if not self.isPlugin then
             Entities:add(self)
@@ -123,33 +189,60 @@ class BaseEntity {
         if not self.isPlugin then
             Entities:remove(self)
         end
+    end,
+
+    getChild = function(path: string)
+        if path:find("/") then
+            local child = self
+
+            for str in path:gmatch("([^/]+)") do
+                if not child or not child.children then
+                    return nil
+                end
+
+                child = child.children[str]
+            end
+
+            return child
+        end
+
+        return self.children[path]
+    end,
+
+    getChildBy = function(key: string, value)
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    return child
+                end
+            else
+                if child[key] == value then
+                    return child
+                end
+            end
+        end
+
+        return nil
+    end,
+
+    getChildrenBy = function(key: string, value)
+        local children = {}
+
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    children[name] = child
+                end
+            else
+                if child[key] == value then
+                    children[name] = child
+                end
+            end
+        end
+
+        return children
     end
 }
-
-deepcopy = function(orig, copies)
-    copies = copies or {}
-
-    if _type(orig) ~= 'table' then
-        return orig
-    elseif copies[orig] then
-        return copies[orig]
-    end
-
-    local copy = {}
-    copies[orig] = copy
-
-    for k, v in next, orig, nil do
-        local key_copy = deepcopy(k, copies)
-        if type(k) == 'string' and k:sub(1, 5) == "_leap" then
-            copy[key_copy] = v -- copy by reference
-        else
-            copy[key_copy] = deepcopy(v, copies)
-        end
-    end
-
-    setmetatable(copy, deepcopy(getmetatable(orig), copies))
-    return copy
-end
 
 -- RPC
 local disableTimeoutNext = false

@@ -120,6 +120,7 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     instance.state = UtilityNet.State(uNetId)
     instance.id = uNetId
     instance.obj = obj
+    instance.model = GetEntityArchetypeName(obj)
 
     if script.name ~= "main" then
         local main = objectScripts[obj]["main"]

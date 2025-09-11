@@ -90,19 +90,28 @@ client_plugin_rpc_mt = {
     end
 }
 
-@skipSerialize({"plugins", "id", "state", "main", "isPlugin"})
+-- Use always the same reference and create a new table only if needed, this reduce memory footprint
+local EMPTY_PLUGINS = {}
+local EMPTY_CHILDREN = {}
+
+@skipSerialize({"plugins", "children", "parent", "id", "state", "main", "isPlugin"})
 class BaseEntity {
     id = nil,
     state = nil,
     main = nil,
+    parent = nil,
 
     constructor = function(coords: vector3 | nil, rotation: vector3 | nil, options = {})
         if self.isPlugin then
             return
         end
 
+        self.children = EMPTY_CHILDREN
+        self.plugins = EMPTY_PLUGINS
+
         if self.__plugins then
             self.plugins = {}
+
             for k,v in pairs(self.__plugins) do
                 local _plugin = _G[v]
 
@@ -224,7 +233,116 @@ class BaseEntity {
         Entities:add(self)
         
         self:callOnAll("OnAwake")
-        self:callOnAll("OnSpawn")
+
+        -- Give time to the children to be added
+        Citizen.SetTimeout(1, function()
+            self:callOnAll("OnSpawn")
+        end)
+
         self:callOnAll("AfterSpawn")
     end,
+
+    addChild = function(name: string, child: BaseEntity)
+        if not child.id then
+            error("${type(self)}: trying to add a child that hasnt been created yet")
+        end
+
+        local exist = table.find(self.children, child)
+        if exist then
+            return
+        end
+        
+        local _root = self        
+        while _root.parent do
+            _root = _root.parent
+        end
+        
+        child.parent = self
+        child.root = _root
+
+        if self.children == EMPTY_CHILDREN then
+            self.children = {}
+        end
+
+        self.children[name] = child
+
+        if not self.state.children then
+            self.state.children = {[name] = child.id}
+        else
+            self.state.children[name] = child.id
+        end
+    end,
+
+    removeChild = function(childOrName: BaseEntity | string)
+        if type(childOrName) == "string" then
+            self.children[childOrName] = nil
+            self.state.children[childOrName] = nil
+        else
+            for name, child in pairs(self.children) do
+                if child == childOrName then
+                    self.children[name] = nil
+                    break
+                end
+            end
+            
+            for name, id in pairs(self.state.children) do
+                if id == childOrName.id then
+                    self.state.children[name] = nil
+                    break
+                end
+            end
+        end
+    end,
+
+    getChild = function(path: string)
+        if path:find("/") then
+            local child = self
+
+            for str in path:gmatch("([^/]+)") do
+                if not child or not child.children then
+                    return nil
+                end
+
+                child = child.children[str]
+            end
+
+            return child
+        end
+
+        return self.children[path]
+    end,
+
+    getChildBy = function(key: string, value)
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    return child
+                end
+            else
+                if child[key] == value then
+                    return child
+                end
+            end
+        end
+
+        return nil
+    end,
+
+    getChildrenBy = function(key: string, value)
+        local children = {}
+
+        for name, child in pairs(self.children) do
+            if type(value) == "function" then
+                if value(child[key]) then
+                    children[name] = child
+                end
+            else
+                if child[key] == value then
+                    children[name] = child
+                end
+            end
+        end
+
+        return children
+    end
 }
