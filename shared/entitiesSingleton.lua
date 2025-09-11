@@ -21,6 +21,21 @@ class EntitiesSingleton {
         return self.list[id]
     end,
 
+    waitFor = function(id: number, timeout: number = 5000)
+        local start = GetGameTimer()
+
+        while not self.list[id] do
+            if GetGameTimer() - start > timeout then
+                throw new Error("${type(self)}: Child ${childId} not found after ${timeout}ms, skipping")
+                return nil
+            end
+
+            Wait(0)
+        end
+
+        return self.list[id]
+    end,
+
     getBy = function(key: string, value)
         for _, entity in pairs(self.list) do
             if type(value) == "function" then
