@@ -525,7 +525,7 @@ class BaseEntity {
     end,
 
     @state("root")
-    _OnRootChange = function(root)
+    _OnRootChange = function(root, load)
         if load then return end
 
         if root then

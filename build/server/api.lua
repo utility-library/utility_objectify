@@ -631,6 +631,9 @@ local EMPTY_CHILDREN = {}
         child.parent = self
         child.root = _root
 
+        child.state.parent = self.id
+        child.state.root = _root.id
+
         if self.children == EMPTY_CHILDREN then
             self.children = {}
         end

@@ -515,9 +515,39 @@ children_mt = {
         CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
     end, {args={},name="constructor",}),
 
+    
+      _OnParentChange = leap.registerfunc(function(self, parent, load)
+        if load then return end
+
+        if parent then
+            self.parent = Entities:waitFor(parent)
+        else
+            self.parent = nil
+        end
+    end, {args={{name = "parent"},{name = "load"},},name="_OnParentChange",}),
+
+    
+      _OnRootChange = leap.registerfunc(function(self, root, load)
+        if load then return end
+
+        if root then
+            self.root = Entities:waitFor(root)
+        else
+            self.root = nil
+        end
+    end, {args={{name = "root"},{name = "load"},},name="_OnRootChange",}),
+
     _BeforeOnSpawn = leap.registerfunc(function(self)
         self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
+
+        if self.state.parent then
+            self.parent = Entities:waitFor(self.state.parent)
+        end
+
+        if self.state.root then
+            self.root = Entities:waitFor(self.state.root)
+        end
 
         if not self.isPlugin then
             Entities:add(self)
@@ -615,7 +645,7 @@ children_mt = {
 
         return children
     end, {args={{name = "key"},{name = "value"},},name="getChildrenBy",has_return=true,})
-}, {});BaseEntity = skipSerialize(BaseEntity, {"main", "isPlugin", "plugins", "server", "listenedStates"}) or BaseEntity;
+}, {});BaseEntity = skipSerialize(BaseEntity, {"main", "isPlugin", "plugins", "server", "listenedStates"}) or BaseEntity;table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnParentChange", decoratorName = "state", args = {"parent"}});table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnRootChange", decoratorName = "state", args = {"root"}});
 
  
 local disableTimeoutNext = false
@@ -1510,6 +1540,9 @@ local EMPTY_CHILDREN = {}
         
         child.parent = self
         child.root = _root
+
+        child.state.parent = self.id
+        child.state.root = _root.id
 
         if self.children == EMPTY_CHILDREN then
             self.children = {}
