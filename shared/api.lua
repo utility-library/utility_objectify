@@ -515,9 +515,39 @@ class BaseEntity {
         CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
     end,
 
+    @state("parent")
+    _OnParentChange = function(parent, load)
+        if load then return end
+
+        if parent then
+            self.parent = Entities:waitFor(parent)
+        else
+            self.parent = nil
+        end
+    end,
+
+    @state("root")
+    _OnRootChange = function(root)
+        if load then return end
+
+        if root then
+            self.root = Entities:waitFor(root)
+        else
+            self.root = nil
+        end
+    end,
+
     _BeforeOnSpawn = function()
         self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
+
+        if self.state.parent then
+            self.parent = Entities:waitFor(self.state.parent)
+        end
+
+        if self.state.root then
+            self.root = Entities:waitFor(self.state.root)
+        end
 
         if not self.isPlugin then
             Entities:add(self)
@@ -1510,6 +1540,9 @@ class BaseEntity {
         
         child.parent = self
         child.root = _root
+
+        child.state.parent = self.id
+        child.state.root = _root.id
 
         if self.children == EMPTY_CHILDREN then
             self.children = {}
