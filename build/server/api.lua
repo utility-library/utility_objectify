@@ -8,6 +8,7 @@ model = leap.registerfunc(function(_class, model, abstract)
                 _class.__prototype[v] = leap.registerfunc(function(...)
                     _class.__prototype.model = v
                     local obj = _class(...)
+                    obj.model = v
                     _class.__prototype.model = nil
 
                     return obj

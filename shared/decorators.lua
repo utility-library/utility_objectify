@@ -7,6 +7,7 @@ function model(_class, model, abstract)
                 _class.__prototype[v] = function(...)
                     _class.__prototype.model = v
                     local obj = new _class(...)
+                    obj.model = v
                     _class.__prototype.model = nil
 
                     return obj
