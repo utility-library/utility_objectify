@@ -53,6 +53,18 @@ function plugin(_class, plugin)
     end
 end
 
+function vehicle(_class, _model)
+    model(_class, "UtilityNet:Veh:".._model, true)
+end
+
+function ped(_class, _model)
+    model(_class, "UtilityNet:Ped:".._model, true)
+end
+
+function object(_class, _model)
+    model(_class, "UtilityNet:Obj:".._model, true)
+end
+
 function state(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
@@ -379,11 +391,12 @@ IsClient = true
 local callbacksLoaded = false
 
 local function CombineHooks(self, methodName, beforeName, afterName)
-    local before = self[beforeName]
     local main = self[methodName]
-    local after = self[afterName]
 
     self[methodName] = function(...)
+        local before = self[beforeName]
+        local after = self[afterName]
+        
         if before then before(self, ...) end
         if main then main(self, ...) end
         if after then return after(self, ...) end
@@ -645,6 +658,55 @@ class BaseEntity {
         end
 
         return children
+    end
+}
+
+class BaseEntityOneSync extends BaseEntity {
+    _CreateOneSyncEntity = function(enttype)
+        local _obj = nil
+
+        if enttype == "Veh" then
+            _obj = CreateVehicle(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Ped" then
+            _obj = CreatePed(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Obj" then
+            _obj = CreateObject(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        end
+
+        if not _obj then
+            error("OneSyncEntity: Failed to create entity for "..tostring(self.id)..", "..tostring(enttype).." is not an allowed type!")
+            return
+        end
+        
+        while not DoesEntityExist(_obj) do
+            Wait(0)
+        end
+
+        local netid = NetworkGetNetworkIdFromEntity(_obj)
+        self.server:_created(netid)
+    end,
+
+    _BeforeOnSpawn = function()
+        self.super:_BeforeOnSpawn()
+
+        local type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
+        self.model = model 
+
+        if not self.state.netId or not NetworkDoesNetworkIdExist(self.state.netId) then
+            local allowed = self.server:_askPermission()
+
+            if allowed then
+                self:_CreateOneSyncEntity(type)
+            end
+        end
+
+        while not self.state.netId do
+            Wait(0)
+        end
+
+        self._obj = self.obj
+        self.obj = NetworkGetEntityFromNetworkId(self.state.netId)
+        self.netId = self.state.netId
     end
 }
 
@@ -1325,23 +1387,33 @@ client_rpc_mt = {
                 if type(cid) != "number" then
                     error("${method} requires the client id as the first argument!", 2)
                 end
-                
+
                 local hasAwait = rawget(self, "_await")
 
-                -- 3 and 2 because the first argument is the client id and should always be ignored
-                if hasAwait then
-                    -- Cant do selfCall and or since the first argument can be nil
-                    if selfCall then
-                        return Client.await[method](cid, self.id, select(3, ...))
+                local call = function(_cid)
+                    -- 3 and 2 because the first argument is the client id and should always be ignored
+                    if hasAwait then
+                        -- Cant do selfCall and or since the first argument can be nil
+                        if selfCall then
+                            return Client.await[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client.await[method](_cid, self.id, select(2, ...))
+                        end
                     else
-                        return Client.await[method](cid, self.id, select(2, ...))
+                        if selfCall then
+                            return Client[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client[method](_cid, self.id, select(2, ...))
+                        end
                     end
+                end
+
+                if cid == -1 then
+                    local ids = exports["utility_lib"]:GetEntityListeners(self.id)
+
+                    return call(ids)
                 else
-                    if selfCall then
-                        return Client[method](cid, self.id, select(3, ...))
-                    else
-                        return Client[method](cid, self.id, select(2, ...))
-                    end
+                    return call(cid)
                 end
             end
         end
@@ -1430,11 +1502,11 @@ class BaseEntity {
     destroy = function()
         Entities:remove(self)
         
-        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
-            if self.OnDestroy then
-                self:OnDestroy()
-            end
+        if self.OnDestroy then
+            self:OnDestroy()
+        end
 
+        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
             UtilityNet.DeleteEntity(self.id)
         end
 
@@ -1502,6 +1574,10 @@ class BaseEntity {
 
         if not self.model then
             error("${_type}: trying to create entity without model, please use the model decorator to set the model")
+        end
+
+        if self.abstract and self.model:find("UtilityNet") and not self is BaseEntityOneSync then
+            error("${type(self)}: trying to create a BasicEntity but using a BaseEntityOneSync decorator, please extend BasicEntityOneSync (vehicle, ped, object)")
         end
 
         options.rotation = options.rotation or rotation
@@ -1632,6 +1708,92 @@ class BaseEntity {
     end
 }
 
+class BaseEntityOneSync extends BaseEntity {
+    netId = nil,
+    spawned = false,
+    
+    constructor = function(coords, rotation, options)
+        if not self.abstract and not (self.model or ""):find("UtilityNet") then
+            error("${type(self)}: trying to create a BasicEntityOneSync without an allowed decorator (vehicle, ped, object)")
+        end
+
+        self:super(coords, rotation, options)
+
+        -- TODO: fix leap not running decorators of parent when extending class
+        rpc(self, self._askPermission, true)
+        rpc(self, self._created, true)
+
+        RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
+            if not source then
+                source = __source
+            end
+
+            if UtilityNet.DoesUNetIdExist(uNetId) then
+                Citizen.Wait(100)
+                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+                if not listeners or #listeners == 0 then
+                    self:destroyNetId()
+                end
+            end
+        end)
+
+        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+            if uNetId == self.id then
+                self:destroy()
+            end
+        end)
+    end,
+
+    _created = function(netId)
+        try
+            self.obj = NetworkGetEntityFromNetworkId(netId)
+            self.netId = netId
+            self.state.netId = netId
+
+            UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
+        catch e
+            self.spawned = false
+            error("Created: Client "..source.." passed an invalid netId "..netId)
+        end
+    end,
+
+    destroy = function()
+        self.super:destroy()
+        self:destroyNetId()
+    end,
+
+    destroyNetId = function()
+        if not self.spawned then
+            return
+        end
+
+        local entity = NetworkGetEntityFromNetworkId(self.netId)
+        local rotation = GetEntityRotation(entity)
+
+        if UtilityNet.DoesUNetIdExist(self.id) then
+            UtilityNet.SetEntityRotation(self.id, rotation)
+            UtilityNet.DetachEntity(self.id)
+
+            self.state.netId = nil
+            self.spawned = false
+        end
+
+        self.netId = nil
+        self.obj = nil
+        DeleteEntity(entity)
+    end,
+
+    _askPermission = function()
+        if not self.spawned then
+            self.spawned = true
+            return true
+        end
+        
+        return false
+    end
+}
+
 ------------------------------------
 
 --BUILD @utility_objectify/server/framework.lua
@@ -1677,12 +1839,34 @@ local await = setmetatable({}, {
     __index = function(self, key)
         local name = namespace.."Client:"..key
 
-        return function(cid: number, ...)
-            local id = GenerateCallbackId()
-            local p = AwaitCallback(name, cid, id)
+        return function(cid: number | table, ...)
             
-            TriggerClientEvent(name, cid, id, ...)
-            return table.unpack(Citizen.Await(p))
+            if type(cid) == "table" then
+                local promises = {}
+
+                for k,v in ipairs(cid) do
+                    local id = GenerateCallbackId()
+                    local p = AwaitCallback(name, cid, id)
+                    TriggerClientEvent(name, cid, id, ...)
+
+                    table.insert(promises, p)
+                end
+
+                local returns = Citizen.Await(promise.all(promises))
+                local retByCid = {}
+
+                for k,v in ipairs(returns) do
+                    retByCid[cid[k]] = v
+                end
+
+                return retByCid
+            else
+                local id = GenerateCallbackId()
+                local p = AwaitCallback(name, cid, id)
+                TriggerClientEvent(name, cid, id, ...)
+
+                return table.unpack(Citizen.Await(p))
+            end
         end
     end
 })
@@ -1694,8 +1878,14 @@ Client = setmetatable({}, {
         if key == "await" then
             return await
         else
-            return function(cid: number, ...)
-                TriggerClientEvent(name, cid, ...)
+            return function(cid: number | table, ...)
+                if type(cid) == "table" then
+                    for k,v in ipairs(cid) do
+                        TriggerClientEvent(name, v, ...)
+                    end
+                else
+                    TriggerClientEvent(name, cid, ...)
+                end
             end
         end
     end,

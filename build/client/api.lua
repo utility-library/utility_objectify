@@ -53,6 +53,18 @@ plugin = leap.registerfunc(function(_class, plugin)
     end
 end, {args={{name = "_class"},{name = "plugin"},},name="plugin",})
 
+vehicle = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Veh:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="vehicle",})
+
+ped = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Ped:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="ped",})
+
+object = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Obj:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="object",})
+
 state = leap.registerfunc(function(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
@@ -377,11 +389,12 @@ IsClient = true
 local callbacksLoaded = false
 
 local  CombineHooks = leap.registerfunc(function(self, methodName, beforeName, afterName)
-    local before = self[beforeName]
     local main = self[methodName]
-    local after = self[afterName]
 
     self[methodName] = leap.registerfunc(function(...)
+        local before = self[beforeName]
+        local after = self[afterName]
+        
         if before then before(self, ...) end
         if main then main(self, ...) end
         if after then return after(self, ...) end
@@ -645,6 +658,55 @@ children_mt = {
         return children
     end, {args={{name = "key"},{name = "value"},},name="getChildrenBy",has_return=true,})
 }, {});BaseEntity = skipSerialize(BaseEntity, {"main", "isPlugin", "plugins", "server", "listenedStates"}) or BaseEntity;table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnParentChange", decoratorName = "state", args = {"parent"}});table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnRootChange", decoratorName = "state", args = {"root"}});
+
+_leap_internal_classBuilder("BaseEntityOneSync",{
+    _CreateOneSyncEntity = leap.registerfunc(function(self, enttype)
+        local _obj = nil
+
+        if enttype == "Veh" then
+            _obj = CreateVehicle(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Ped" then
+            _obj = CreatePed(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Obj" then
+            _obj = CreateObject(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        end
+
+        if not _obj then
+            error("OneSyncEntity: Failed to create entity for "..tostring(self.id)..", "..tostring(enttype).." is not an allowed type!")
+            return
+        end
+        
+        while not DoesEntityExist(_obj) do
+            Wait(0)
+        end
+
+        local netid = NetworkGetNetworkIdFromEntity(_obj)
+        self.server:_created(netid)
+    end, {args={{name = "enttype"},},name="_CreateOneSyncEntity",}),
+
+    _BeforeOnSpawn = leap.registerfunc(function(self)
+        BaseEntity.__prototype._BeforeOnSpawn(self)
+
+        local type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
+        self.model = model 
+
+        if not self.state.netId or not NetworkDoesNetworkIdExist(self.state.netId) then
+            local allowed = self.server:_askPermission()
+
+            if allowed then
+                self:_CreateOneSyncEntity(type)
+            end
+        end
+
+        while not self.state.netId do
+            Wait(0)
+        end
+
+        self._obj = self.obj
+        self.obj = NetworkGetEntityFromNetworkId(self.state.netId)
+        self.netId = self.state.netId
+    end, {args={},name="_BeforeOnSpawn",})
+}, BaseEntity)
 
  
 local disableTimeoutNext = false

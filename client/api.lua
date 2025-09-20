@@ -53,6 +53,18 @@ function plugin(_class, plugin)
     end
 end
 
+function vehicle(_class, _model)
+    model(_class, "UtilityNet:Veh:".._model, true)
+end
+
+function ped(_class, _model)
+    model(_class, "UtilityNet:Ped:".._model, true)
+end
+
+function object(_class, _model)
+    model(_class, "UtilityNet:Obj:".._model, true)
+end
+
 function state(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
@@ -377,11 +389,12 @@ IsClient = true
 local callbacksLoaded = false
 
 local function CombineHooks(self, methodName, beforeName, afterName)
-    local before = self[beforeName]
     local main = self[methodName]
-    local after = self[afterName]
 
     self[methodName] = function(...)
+        local before = self[beforeName]
+        local after = self[afterName]
+        
         if before then before(self, ...) end
         if main then main(self, ...) end
         if after then return after(self, ...) end
@@ -643,6 +656,55 @@ class BaseEntity {
         end
 
         return children
+    end
+}
+
+class BaseEntityOneSync extends BaseEntity {
+    _CreateOneSyncEntity = function(enttype)
+        local _obj = nil
+
+        if enttype == "Veh" then
+            _obj = CreateVehicle(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Ped" then
+            _obj = CreatePed(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        elseif enttype == "Obj" then
+            _obj = CreateObject(self.model, GetEntityCoords(self.obj), GetEntityHeading(self.obj), true, true)
+        end
+
+        if not _obj then
+            error("OneSyncEntity: Failed to create entity for "..tostring(self.id)..", "..tostring(enttype).." is not an allowed type!")
+            return
+        end
+        
+        while not DoesEntityExist(_obj) do
+            Wait(0)
+        end
+
+        local netid = NetworkGetNetworkIdFromEntity(_obj)
+        self.server:_created(netid)
+    end,
+
+    _BeforeOnSpawn = function()
+        self.super:_BeforeOnSpawn()
+
+        local type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
+        self.model = model 
+
+        if not self.state.netId or not NetworkDoesNetworkIdExist(self.state.netId) then
+            local allowed = self.server:_askPermission()
+
+            if allowed then
+                self:_CreateOneSyncEntity(type)
+            end
+        end
+
+        while not self.state.netId do
+            Wait(0)
+        end
+
+        self._obj = self.obj
+        self.obj = NetworkGetEntityFromNetworkId(self.state.netId)
+        self.netId = self.state.netId
     end
 }
 

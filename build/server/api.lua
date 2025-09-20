@@ -53,6 +53,18 @@ plugin = leap.registerfunc(function(_class, plugin)
     end
 end, {args={{name = "_class"},{name = "plugin"},},name="plugin",})
 
+vehicle = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Veh:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="vehicle",})
+
+ped = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Ped:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="ped",})
+
+object = leap.registerfunc(function(_class, _model)
+    model(_class, "UtilityNet:Obj:".._model, true)
+end, {args={{name = "_class"},{name = "_model"},},name="object",})
+
 state = leap.registerfunc(function(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
@@ -415,26 +427,36 @@ client_rpc_mt = {
                 if type(cid) ~= "number" then
                     error(""..(method).." requires the client id as the first argument!", 2)
                 end
-                
+
                 local hasAwait = rawget(self, "_await")
 
-                                
-                if hasAwait then
-                                
-                    if selfCall then
-                        return Client.await[method](cid, self.id, select(3, ...))
+                local call = leap.registerfunc(function(_cid)
+                                    
+                    if hasAwait then
+                                    
+                        if selfCall then
+                            return Client.await[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client.await[method](_cid, self.id, select(2, ...))
+                        end
                     else
-                        return Client.await[method](cid, self.id, select(2, ...))
+                        if selfCall then
+                            return Client[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client[method](_cid, self.id, select(2, ...))
+                        end
                     end
+                end, {args={{name = "_cid"},},name="call",has_return=true,})
+
+                if cid == -1 then
+                    local ids = exports["utility_lib"]:GetEntityListeners(self.id)
+
+                    return call(ids)
                 else
-                    if selfCall then
-                        return Client[method](cid, self.id, select(3, ...))
-                    else
-                        return Client[method](cid, self.id, select(2, ...))
-                    end
+                    return call(cid)
                 end
             end
-        end, {args={{name = "self"},{name = "key"},},name="fn",has_return=true,})
+        end, {args={},name="fn",has_return=true,})
 
         rawset(self, key, fn)  
         return fn
@@ -520,11 +542,11 @@ local EMPTY_CHILDREN = {}
     destroy = leap.registerfunc(function(self)
         Entities:remove(self)
         
-        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
-            if self.OnDestroy then
-                self:OnDestroy()
-            end
+        if self.OnDestroy then
+            self:OnDestroy()
+        end
 
+        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
             UtilityNet.DeleteEntity(self.id)
         end
 
@@ -592,6 +614,10 @@ local EMPTY_CHILDREN = {}
 
         if not self.model then
             error(""..(_type)..": trying to create entity without model, please use the model decorator to set the model")
+        end
+
+        if self.abstract and self.model:find("UtilityNet") and not _leap_internal_is_operator(self,  BaseEntityOneSync) then
+            error(""..(type(self))..": trying to create a BasicEntity but using a BaseEntityOneSync decorator, please extend BasicEntityOneSync (vehicle, ped, object)")
         end
 
         options.rotation = options.rotation or rotation
@@ -722,6 +748,92 @@ local EMPTY_CHILDREN = {}
     end, {args={{name = "key"},{name = "value"},},name="getChildrenBy",has_return=true,})
 }, {});BaseEntity = skipSerialize(BaseEntity, {"plugins", "children", "parent", "id", "state", "main", "isPlugin"}) or BaseEntity;
 
+_leap_internal_classBuilder("BaseEntityOneSync",{
+    netId = nil,
+    spawned = false,
+    
+    constructor = leap.registerfunc(function(self, coords, rotation, options)
+        if not self.abstract and not (self.model or ""):find("UtilityNet") then
+            error(""..(type(self))..": trying to create a BasicEntityOneSync without an allowed decorator (vehicle, ped, object)")
+        end
+
+        BaseEntity.__prototype.constructor(self,coords, rotation, options)
+
+                   
+        rpc(self, self._askPermission, true)
+        rpc(self, self._created, true)
+
+        RegisterNetEvent("Utility:Net:RemoveStateListener", leap.registerfunc(function(uNetId, __source)
+            if not source then
+                source = __source
+            end
+
+            if UtilityNet.DoesUNetIdExist(uNetId) then
+                Citizen.Wait(100)
+                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+                if not listeners or #listeners == 0 then
+                    self:destroyNetId()
+                end
+            end
+        end, {args={{name = "uNetId"},{name = "__source"},},name="RegisterNetEvent",}))
+
+        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+            if uNetId == self.id then
+                self:destroy()
+            end
+        end)
+    end, {args={{name = "uNetId"},},name="constructor",}),
+
+    _created = leap.registerfunc(function(self, netId)
+        local _leap_internal_status, _leap_internal_result = pcall(function()
+            self.obj = NetworkGetEntityFromNetworkId(netId)
+            self.netId = netId
+            self.state.netId = netId
+
+            UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
+        end) if not _leap_internal_status then local  e = _leap_internal_result;
+            self.spawned = false
+            error("Created: Client "..source.." passed an invalid netId "..netId)
+         elseif _leap_internal_result ~= nil then return _leap_internal_result end;
+    end, {args={{name = "netId"},},name="_created",}),
+
+    destroy = leap.registerfunc(function(self)
+        BaseEntity.__prototype.destroy(self)
+        self:destroyNetId()
+    end, {args={},name="destroy",}),
+
+    destroyNetId = leap.registerfunc(function(self)
+        if not self.spawned then
+            return
+        end
+
+        local entity = NetworkGetEntityFromNetworkId(self.netId)
+        local rotation = GetEntityRotation(entity)
+
+        if UtilityNet.DoesUNetIdExist(self.id) then
+            UtilityNet.SetEntityRotation(self.id, rotation)
+            UtilityNet.DetachEntity(self.id)
+
+            self.state.netId = nil
+            self.spawned = false
+        end
+
+        self.netId = nil
+        self.obj = nil
+        DeleteEntity(entity)
+    end, {args={},name="destroyNetId",}),
+
+    _askPermission = leap.registerfunc(function(self)
+        if not self.spawned then
+            self.spawned = true
+            return true
+        end
+        
+        return false
+    end, {args={},name="_askPermission",has_return=true,})
+}, BaseEntity)
+
 
 
  
@@ -767,12 +879,34 @@ local await = setmetatable({}, {
     __index = leap.registerfunc(function(self, key)
         local name = namespace.."Client:"..key
 
-        return function(cid, ...)if type(cid) ~= "number" then error('cid: must be (number) but got '..type(cid)..'', 2) end;
-            local id = GenerateCallbackId()
-            local p = AwaitCallback(name, cid, id)
+        return function(cid, ...)if type(cid) ~= "number" and type(cid) ~= "table" then error('cid: must be (number | table) but got '..type(cid)..'', 2) end;
             
-            TriggerClientEvent(name, cid, id, ...)
-            return table.unpack(Citizen.Await(p))
+            if type(cid) == "table" then
+                local promises = {}
+
+                for k,v in ipairs(cid) do
+                    local id = GenerateCallbackId()
+                    local p = AwaitCallback(name, cid, id)
+                    TriggerClientEvent(name, cid, id, ...)
+
+                    table.insert(promises, p)
+                end
+
+                local returns = Citizen.Await(promise.all(promises))
+                local retByCid = {}
+
+                for k,v in ipairs(returns) do
+                    retByCid[cid[k]] = v
+                end
+
+                return retByCid
+            else
+                local id = GenerateCallbackId()
+                local p = AwaitCallback(name, cid, id)
+                TriggerClientEvent(name, cid, id, ...)
+
+                return table.unpack(Citizen.Await(p))
+            end
         end
     end, {args={{name = "cid"},},name="__index",has_return=true,})
 })
@@ -784,8 +918,14 @@ Client = setmetatable({}, {
         if key == "await" then
             return await
         else
-            return function(cid, ...)if type(cid) ~= "number" then error('cid: must be (number) but got '..type(cid)..'', 2) end;
-                TriggerClientEvent(name, cid, ...)
+            return function(cid, ...)if type(cid) ~= "number" and type(cid) ~= "table" then error('cid: must be (number | table) but got '..type(cid)..'', 2) end;
+                if type(cid) == "table" then
+                    for k,v in ipairs(cid) do
+                        TriggerClientEvent(name, v, ...)
+                    end
+                else
+                    TriggerClientEvent(name, cid, ...)
+                end
             end
         end
     end, {args={{name = "cid"},},name="__index",has_return=true,}),
