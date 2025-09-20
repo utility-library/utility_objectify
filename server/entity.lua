@@ -43,23 +43,33 @@ client_rpc_mt = {
                 if type(cid) != "number" then
                     error("${method} requires the client id as the first argument!", 2)
                 end
-                
+
                 local hasAwait = rawget(self, "_await")
 
-                -- 3 and 2 because the first argument is the client id and should always be ignored
-                if hasAwait then
-                    -- Cant do selfCall and or since the first argument can be nil
-                    if selfCall then
-                        return Client.await[method](cid, self.id, select(3, ...))
+                local call = function(_cid)
+                    -- 3 and 2 because the first argument is the client id and should always be ignored
+                    if hasAwait then
+                        -- Cant do selfCall and or since the first argument can be nil
+                        if selfCall then
+                            return Client.await[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client.await[method](_cid, self.id, select(2, ...))
+                        end
                     else
-                        return Client.await[method](cid, self.id, select(2, ...))
+                        if selfCall then
+                            return Client[method](_cid, self.id, select(3, ...))
+                        else
+                            return Client[method](_cid, self.id, select(2, ...))
+                        end
                     end
+                end
+
+                if cid == -1 then
+                    local ids = exports["utility_lib"]:GetEntityListeners(self.id)
+
+                    return call(ids)
                 else
-                    if selfCall then
-                        return Client[method](cid, self.id, select(3, ...))
-                    else
-                        return Client[method](cid, self.id, select(2, ...))
-                    end
+                    return call(cid)
                 end
             end
         end
