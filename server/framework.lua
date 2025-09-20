@@ -40,12 +40,34 @@ local await = setmetatable({}, {
     __index = function(self, key)
         local name = namespace.."Client:"..key
 
-        return function(cid: number, ...)
-            local id = GenerateCallbackId()
-            local p = AwaitCallback(name, cid, id)
+        return function(cid: number | table, ...)
             
-            TriggerClientEvent(name, cid, id, ...)
-            return table.unpack(Citizen.Await(p))
+            if type(cid) == "table" then
+                local promises = {}
+
+                for k,v in ipairs(cid) do
+                    local id = GenerateCallbackId()
+                    local p = AwaitCallback(name, cid, id)
+                    TriggerClientEvent(name, cid, id, ...)
+
+                    table.insert(promises, p)
+                end
+
+                local returns = Citizen.Await(promise.all(promises))
+                local retByCid = {}
+
+                for k,v in ipairs(returns) do
+                    retByCid[cid[k]] = v
+                end
+
+                return retByCid
+            else
+                local id = GenerateCallbackId()
+                local p = AwaitCallback(name, cid, id)
+                TriggerClientEvent(name, cid, id, ...)
+
+                return table.unpack(Citizen.Await(p))
+            end
         end
     end
 })
@@ -57,8 +79,14 @@ Client = setmetatable({}, {
         if key == "await" then
             return await
         else
-            return function(cid: number, ...)
-                TriggerClientEvent(name, cid, ...)
+            return function(cid: number | table, ...)
+                if type(cid) == "table" then
+                    for k,v in ipairs(cid) do
+                        TriggerClientEvent(name, v, ...)
+                    end
+                else
+                    TriggerClientEvent(name, cid, ...)
+                end
             end
         end
     end,
