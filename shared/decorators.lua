@@ -52,6 +52,18 @@ function plugin(_class, plugin)
     end
 end
 
+function vehicle(_class, _model)
+    model(_class, "UtilityNet:Veh:".._model, true)
+end
+
+function ped(_class, _model)
+    model(_class, "UtilityNet:Ped:".._model, true)
+end
+
+function object(_class, _model)
+    model(_class, "UtilityNet:Obj:".._model, true)
+end
+
 function state(self, fn, key, value)
     if not self.listenedStates then
         self.listenedStates = {}
