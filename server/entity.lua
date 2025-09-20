@@ -158,11 +158,11 @@ class BaseEntity {
     destroy = function()
         Entities:remove(self)
         
-        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
-            if self.OnDestroy then
-                self:OnDestroy()
-            end
+        if self.OnDestroy then
+            self:OnDestroy()
+        end
 
+        if self.id and UtilityNet.DoesUNetIdExist(self.id) then
             UtilityNet.DeleteEntity(self.id)
         end
 
@@ -230,6 +230,10 @@ class BaseEntity {
 
         if not self.model then
             error("${_type}: trying to create entity without model, please use the model decorator to set the model")
+        end
+
+        if self.abstract and self.model:find("UtilityNet") and not self is BaseEntityOneSync then
+            error("${type(self)}: trying to create a BasicEntity but using a BaseEntityOneSync decorator, please extend BasicEntityOneSync (vehicle, ped, object)")
         end
 
         options.rotation = options.rotation or rotation
@@ -357,5 +361,91 @@ class BaseEntity {
         end
 
         return children
+    end
+}
+
+class BaseEntityOneSync extends BaseEntity {
+    netId = nil,
+    spawned = false,
+    
+    constructor = function(coords, rotation, options)
+        if not self.abstract and not (self.model or ""):find("UtilityNet") then
+            error("${type(self)}: trying to create a BasicEntityOneSync without an allowed decorator (vehicle, ped, object)")
+        end
+
+        self:super(coords, rotation, options)
+
+        -- TODO: fix leap not running decorators of parent when extending class
+        rpc(self, self._askPermission, true)
+        rpc(self, self._created, true)
+
+        RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
+            if not source then
+                source = __source
+            end
+
+            if UtilityNet.DoesUNetIdExist(uNetId) then
+                Citizen.Wait(100)
+                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+                if not listeners or #listeners == 0 then
+                    self:destroyNetId()
+                end
+            end
+        end)
+
+        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+            if uNetId == self.id then
+                self:destroy()
+            end
+        end)
+    end,
+
+    _created = function(netId)
+        try
+            self.obj = NetworkGetEntityFromNetworkId(netId)
+            self.netId = netId
+            self.state.netId = netId
+
+            UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
+        catch e
+            self.spawned = false
+            error("Created: Client "..source.." passed an invalid netId "..netId)
+        end
+    end,
+
+    destroy = function()
+        self.super:destroy()
+        self:destroyNetId()
+    end,
+
+    destroyNetId = function()
+        if not self.spawned then
+            return
+        end
+
+        local entity = NetworkGetEntityFromNetworkId(self.netId)
+        local rotation = GetEntityRotation(entity)
+
+        if UtilityNet.DoesUNetIdExist(self.id) then
+            UtilityNet.SetEntityRotation(self.id, rotation)
+            UtilityNet.DetachEntity(self.id)
+
+            self.state.netId = nil
+            self.spawned = false
+        end
+
+        self.netId = nil
+        self.obj = nil
+        DeleteEntity(entity)
+    end,
+
+    _askPermission = function()
+        if not self.spawned then
+            self.spawned = true
+            return true
+        end
+        
+        return false
     end
 }
