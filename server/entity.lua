@@ -46,7 +46,7 @@ client_rpc_mt = {
 
                 local hasAwait = rawget(self, "_await")
 
-                local call = function(_cid)
+                local call = function(_cid, ...)
                     -- 3 and 2 because the first argument is the client id and should always be ignored
                     if hasAwait then
                         -- Cant do selfCall and or since the first argument can be nil
@@ -67,9 +67,9 @@ client_rpc_mt = {
                 if cid == -1 then
                     local ids = exports["utility_lib"]:GetEntityListeners(self.id)
 
-                    return call(ids)
+                    return call(ids, ...)
                 else
-                    return call(cid)
+                    return call(cid, ...)
                 end
             end
         end

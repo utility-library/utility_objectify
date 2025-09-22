@@ -430,7 +430,7 @@ client_rpc_mt = {
 
                 local hasAwait = rawget(self, "_await")
 
-                local call = leap.registerfunc(function(_cid)
+                local call = leap.registerfunc(function(_cid, ...)
                                     
                     if hasAwait then
                                     
@@ -451,9 +451,9 @@ client_rpc_mt = {
                 if cid == -1 then
                     local ids = exports["utility_lib"]:GetEntityListeners(self.id)
 
-                    return call(ids)
+                    return call(ids, ...)
                 else
-                    return call(cid)
+                    return call(cid, ...)
                 end
             end
         end, {args={},name="fn",has_return=true,})
