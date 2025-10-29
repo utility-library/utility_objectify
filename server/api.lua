@@ -632,14 +632,12 @@ class BaseEntity {
         self:init(id, state, client)
         Entities:add(self)
         
-        self:callOnAll("OnAwake")
-
         -- Give time to the children to be added
         Citizen.SetTimeout(1, function()
+            self:callOnAll("OnAwake")
             self:callOnAll("OnSpawn")
+            self:callOnAll("AfterSpawn")
         end)
-
-        self:callOnAll("AfterSpawn")
     end,
 
     addChild = function(name: string, child: BaseEntity)
@@ -803,14 +801,12 @@ class BaseEntityOneSync extends BaseEntity {
 
             UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
 
-            self:callOnAll("OnAwake")
-
             -- Give time to the children to be added
             Citizen.SetTimeout(1, function()
+                self:callOnAll("OnAwake")
                 self:callOnAll("OnSpawn")
+                self:callOnAll("AfterSpawn")
             end)
-
-            self:callOnAll("AfterSpawn")
         catch e
             self.spawned = false
             error("Created: Client "..source.." passed an invalid netId "..netId)

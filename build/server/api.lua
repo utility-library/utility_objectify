@@ -632,14 +632,12 @@ local EMPTY_CHILDREN = {}
         self:init(id, state, client)
         Entities:add(self)
         
-        self:callOnAll("OnAwake")
-
                 
         Citizen.SetTimeout(1, function()
+            self:callOnAll("OnAwake")
             self:callOnAll("OnSpawn")
+            self:callOnAll("AfterSpawn")
         end)
-
-        self:callOnAll("AfterSpawn")
     end, {args={{name = "coords"},{name = "rotation"},{name = "options"},},name="create",}),
 
     addChild = leap.registerfunc(function(self, name, child)if type(name) ~= "string" then error('name: must be (string) but got '..type(name)..'', 2) end;if _type(child) ~= "table" and not _leap_internal_is_operator(child, BaseEntity) then error('child: must be (BaseEntity) or a derived class but got '..type(child)..'', 2) end;
@@ -803,14 +801,12 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
 
             UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
 
-            self:callOnAll("OnAwake")
-
                     
             Citizen.SetTimeout(1, function()
+                self:callOnAll("OnAwake")
                 self:callOnAll("OnSpawn")
+                self:callOnAll("AfterSpawn")
             end)
-
-            self:callOnAll("AfterSpawn")
         end) if not _leap_internal_status then local  e = _leap_internal_result;
             self.spawned = false
             error("Created: Client "..source.." passed an invalid netId "..netId)
