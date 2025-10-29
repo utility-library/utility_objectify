@@ -542,9 +542,7 @@ class BaseEntity {
     destroy = function()
         Entities:remove(self)
         
-        if self.OnDestroy then
-            self:OnDestroy()
-        end
+        self:callOnAll("OnDestroy")
 
         if self.id and UtilityNet.DoesUNetIdExist(self.id) then
             UtilityNet.DeleteEntity(self.id)
@@ -785,6 +783,14 @@ class BaseEntityOneSync extends BaseEntity {
         end)
     end,
 
+    callOnAll = function(...)
+        if not self.netId then
+            return
+        end
+
+        self.super:callOnAll(...)
+    end,
+
     _created = function(netId)
         try
             self.obj = NetworkGetEntityFromNetworkId(netId)
@@ -792,6 +798,15 @@ class BaseEntityOneSync extends BaseEntity {
             self.state.netId = netId
 
             UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
+
+            self:callOnAll("OnAwake")
+
+            -- Give time to the children to be added
+            Citizen.SetTimeout(1, function()
+                self:callOnAll("OnSpawn")
+            end)
+
+            self:callOnAll("AfterSpawn")
         catch e
             self.spawned = false
             error("Created: Client "..source.." passed an invalid netId "..netId)
@@ -807,6 +822,8 @@ class BaseEntityOneSync extends BaseEntity {
         if not self.spawned then
             return
         end
+
+        self:callOnAll("OnDestroy")
 
         local entity = NetworkGetEntityFromNetworkId(self.netId)
         local rotation = GetEntityRotation(entity)
