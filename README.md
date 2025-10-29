@@ -3,6 +3,8 @@ Take a raw entity and objectify it, make it manageable, programmable, and lifecy
 
 `utility_objectify` is a simple but powerful system that lets you add custom behavior to entities in FiveM. you can easily attach logic to them and manage their lifecycle (spawn, destroy, state changes, etc.).
 
+Join [utility discord](https://discord.gg/QPfAyjNWJH)!
+
 Dependencies: 
 - [utility_lib](https://github.com/utility-library/utility_lib)
 - [leap](https://github.com/utility-library/leap)
