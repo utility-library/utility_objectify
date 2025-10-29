@@ -180,6 +180,10 @@ local exposedEntitiesRpcs = {} -- Used to store all class exposed rpcs
 local callbacks = {}
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
+function SetRPCNamespace(_namespace)
+    namespace = _namespace
+end
+
 if not IsDuplicityVersion() then
     callbacks["GetCallbacks"] = true
 end
@@ -1817,6 +1821,7 @@ class BaseEntityOneSync extends BaseEntity {
 -- v1.1
 IsServer = true
 IsClient = false
+local disableTimeoutNext = false
 
 @rpc(true)
 function GetCallbacks()
@@ -1828,13 +1833,18 @@ function GenerateCallbackId()
 end
 
 function AwaitCallback(name, cid, id)
-    local p = promise.new()        
-    Citizen.SetTimeout(5000, function()
-        if p.state == 0 then
-            warn("Client callback ${name}(${tostring(id)}) sended to ${tostring(cid)} timed out")
-            p:reject({})
-        end
-    end)
+    local p = promise.new() 
+
+    if not disableTimeoutNext then
+        Citizen.SetTimeout(5000, function()
+            if p.state == 0 then
+                warn("Client callback ${name}(${tostring(id)}) sended to ${tostring(cid)} timed out")
+                p:reject({})
+            end
+        end)
+    else
+        disableTimeoutNext = false
+    end
 
     local eventHandler = nil
 
@@ -1888,7 +1898,11 @@ local await = setmetatable({}, {
     end
 })
 
-Client = setmetatable({}, {
+Client = setmetatable({
+    DisableTimeoutForNext = function()
+        disableTimeoutNext = true
+    end
+}, {
     __index = function(self, key)
         local name = namespace.."Client:"..key
 

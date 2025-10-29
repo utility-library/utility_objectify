@@ -180,6 +180,10 @@ local exposedEntitiesRpcs = {} -- Used to store all class exposed rpcs
 local callbacks = {}
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
+function SetRPCNamespace(_namespace)
+    namespace = _namespace
+end
+
 if not IsDuplicityVersion() then
     callbacks["GetCallbacks"] = true
 end

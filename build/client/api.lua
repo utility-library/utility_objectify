@@ -180,6 +180,10 @@ local exposedEntitiesRpcs = {}
 local callbacks = {}
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
+SetRPCNamespace = leap.registerfunc(function(_namespace)
+    namespace = _namespace
+end, {args={{name = "_namespace"},},name="SetRPCNamespace",})
+
 if not IsDuplicityVersion() then
     callbacks["GetCallbacks"] = true
 end

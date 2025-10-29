@@ -180,6 +180,10 @@ local exposedEntitiesRpcs = {}
 local callbacks = {}
 local namespace = (Config?.Namespace or GetCurrentResourceName()) .. ":"
 
+SetRPCNamespace = leap.registerfunc(function(_namespace)
+    namespace = _namespace
+end, {args={{name = "_namespace"},},name="SetRPCNamespace",})
+
 if not IsDuplicityVersion() then
     callbacks["GetCallbacks"] = true
 end
@@ -1817,6 +1821,7 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
  
 IsServer = true
 IsClient = false
+local disableTimeoutNext = false
 
  
  GetCallbacks = leap.registerfunc(function()
@@ -1828,13 +1833,18 @@ GenerateCallbackId = leap.registerfunc(function()
 end, {args={},name="GenerateCallbackId",has_return=true,})
 
 AwaitCallback = leap.registerfunc(function(name, cid, id)
-    local p = promise.new()        
-    Citizen.SetTimeout(5000, function()
-        if p.state == 0 then
-            warn("Client callback "..(name).."("..(tostring(id))..") sended to "..(tostring(cid)).." timed out")
-            p:reject({})
-        end
-    end)
+    local p = promise.new() 
+
+    if not disableTimeoutNext then
+        Citizen.SetTimeout(5000, function()
+            if p.state == 0 then
+                warn("Client callback "..(name).."("..(tostring(id))..") sended to "..(tostring(cid)).." timed out")
+                p:reject({})
+            end
+        end)
+    else
+        disableTimeoutNext = false
+    end
 
     local eventHandler = nil
 
@@ -1888,7 +1898,11 @@ local await = setmetatable({}, {
     end, {args={{name = "cid"},},name="__index",has_return=true,})
 })
 
-Client = setmetatable({}, {
+Client = setmetatable({
+    DisableTimeoutForNext = leap.registerfunc(function()
+        disableTimeoutNext = true
+    end, {args={},name="DisableTimeoutForNext",})
+}, {
     __index = leap.registerfunc(function(self, key)
         local name = namespace.."Client:"..key
 
