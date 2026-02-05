@@ -7,6 +7,8 @@ model = leap.registerfunc(function(_class, model, abstract)
             elseif IsServer then
                 _class.__prototype[v] = leap.registerfunc(function(...)
                     _class.__prototype.model = v
+                    _class.__prototype.abstract = abstract
+
                     local obj = _class(...)
                     obj.model = v
                     _class.__prototype.model = nil
@@ -53,16 +55,28 @@ plugin = leap.registerfunc(function(_class, plugin)
     end
 end, {args={{name = "_class"},{name = "plugin"},},name="plugin",})
 
+local  registerOneSyncEntity = leap.registerfunc(function(_class, _type, _model)
+    if type(_model) == "table" then
+        for k,v in pairs(_model) do
+            _model[k] = "UtilityNet:".._type..":"..v
+        end
+
+        model(_class, _model, true)
+    else
+        model(_class, "UtilityNet:".._type..":".._model, true)
+    end
+end, {args={{name = "_class"},{name = "_type"},{name = "_model"},},name="registerOneSyncEntity",})
+
 vehicle = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Veh:".._model, true)
+    registerOneSyncEntity(_class, "Veh", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="vehicle",})
 
 ped = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Ped:".._model, true)
+    registerOneSyncEntity(_class, "Ped", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="ped",})
 
 object = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Obj:".._model, true)
+    registerOneSyncEntity(_class, "Obj", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="object",})
 
 state = leap.registerfunc(function(self, fn, key, value)

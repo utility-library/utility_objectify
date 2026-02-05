@@ -7,6 +7,8 @@ function model(_class, model, abstract)
             elseif IsServer then
                 _class.__prototype[v] = function(...)
                     _class.__prototype.model = v
+                    _class.__prototype.abstract = abstract
+
                     local obj = new _class(...)
                     obj.model = v
                     _class.__prototype.model = nil
@@ -53,16 +55,28 @@ function plugin(_class, plugin)
     end
 end
 
+local function registerOneSyncEntity(_class, _type, _model)
+    if type(_model) == "table" then
+        for k,v in pairs(_model) do
+            _model[k] = "UtilityNet:".._type..":"..v
+        end
+
+        model(_class, _model, true)
+    else
+        model(_class, "UtilityNet:".._type..":".._model, true)
+    end
+end
+
 function vehicle(_class, _model)
-    model(_class, "UtilityNet:Veh:".._model, true)
+    registerOneSyncEntity(_class, "Veh", _model)
 end
 
 function ped(_class, _model)
-    model(_class, "UtilityNet:Ped:".._model, true)
+    registerOneSyncEntity(_class, "Ped", _model)
 end
 
 function object(_class, _model)
-    model(_class, "UtilityNet:Obj:".._model, true)
+    registerOneSyncEntity(_class, "Obj", _model)
 end
 
 function state(self, fn, key, value)

@@ -7,6 +7,8 @@ function model(_class, model, abstract)
             elseif IsServer then
                 _class.__prototype[v] = function(...)
                     _class.__prototype.model = v
+                    _class.__prototype.abstract = abstract
+
                     local obj = new _class(...)
                     obj.model = v
                     _class.__prototype.model = nil
@@ -53,16 +55,28 @@ function plugin(_class, plugin)
     end
 end
 
+local function registerOneSyncEntity(_class, _type, _model)
+    if type(_model) == "table" then
+        for k,v in pairs(_model) do
+            _model[k] = "UtilityNet:".._type..":"..v
+        end
+
+        model(_class, _model, true)
+    else
+        model(_class, "UtilityNet:".._type..":".._model, true)
+    end
+end
+
 function vehicle(_class, _model)
-    model(_class, "UtilityNet:Veh:".._model, true)
+    registerOneSyncEntity(_class, "Veh", _model)
 end
 
 function ped(_class, _model)
-    model(_class, "UtilityNet:Ped:".._model, true)
+    registerOneSyncEntity(_class, "Ped", _model)
 end
 
 function object(_class, _model)
-    model(_class, "UtilityNet:Obj:".._model, true)
+    registerOneSyncEntity(_class, "Obj", _model)
 end
 
 function state(self, fn, key, value)
@@ -555,6 +569,10 @@ class BaseEntity {
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
+
+        if self.parent then
+            self.parent:removeChild(self)
+        end
     end,
 
     init = function(id, state, client)
@@ -762,27 +780,6 @@ class BaseEntityOneSync extends BaseEntity {
         -- TODO: fix leap not running decorators of parent when extending class
         rpc(self, self._askPermission, true)
         rpc(self, self._created, true)
-
-        RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
-            if not source then
-                source = __source
-            end
-
-            if UtilityNet.DoesUNetIdExist(uNetId) then
-                Citizen.Wait(100)
-                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
-    
-                if not listeners or #listeners == 0 then
-                    self:destroyNetId()
-                end
-            end
-        end)
-
-        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
-            if uNetId == self.id then
-                self:destroy()
-            end
-        end)
     end,
 
     callOnAll = function(...)
@@ -850,6 +847,31 @@ class BaseEntityOneSync extends BaseEntity {
         return false
     end
 }
+
+AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+    local entity = Entities:get(uNetId)
+    if entity and entity is BaseEntityOneSync then
+        entity:destroy()
+    end
+end)
+
+RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
+    if not source then
+        source = __source
+    end
+
+    if UtilityNet.DoesUNetIdExist(uNetId) then
+        local entity = Entities:get(uNetId)
+        if entity and entity is BaseEntityOneSync then
+            Citizen.Wait(100)
+            local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+            if not listeners or #listeners == 0 then
+                entity:destroyNetId()
+            end
+        end
+    end
+end)
 
 ------------------------------------
 

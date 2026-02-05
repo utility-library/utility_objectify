@@ -7,6 +7,8 @@ model = leap.registerfunc(function(_class, model, abstract)
             elseif IsServer then
                 _class.__prototype[v] = leap.registerfunc(function(...)
                     _class.__prototype.model = v
+                    _class.__prototype.abstract = abstract
+
                     local obj = _class(...)
                     obj.model = v
                     _class.__prototype.model = nil
@@ -53,16 +55,28 @@ plugin = leap.registerfunc(function(_class, plugin)
     end
 end, {args={{name = "_class"},{name = "plugin"},},name="plugin",})
 
+local  registerOneSyncEntity = leap.registerfunc(function(_class, _type, _model)
+    if type(_model) == "table" then
+        for k,v in pairs(_model) do
+            _model[k] = "UtilityNet:".._type..":"..v
+        end
+
+        model(_class, _model, true)
+    else
+        model(_class, "UtilityNet:".._type..":".._model, true)
+    end
+end, {args={{name = "_class"},{name = "_type"},{name = "_model"},},name="registerOneSyncEntity",})
+
 vehicle = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Veh:".._model, true)
+    registerOneSyncEntity(_class, "Veh", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="vehicle",})
 
 ped = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Ped:".._model, true)
+    registerOneSyncEntity(_class, "Ped", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="ped",})
 
 object = leap.registerfunc(function(_class, _model)
-    model(_class, "UtilityNet:Obj:".._model, true)
+    registerOneSyncEntity(_class, "Obj", _model)
 end, {args={{name = "_class"},{name = "_model"},},name="object",})
 
 state = leap.registerfunc(function(self, fn, key, value)
@@ -1515,6 +1529,10 @@ local EMPTY_CHILDREN = {}
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
+
+        if self.parent then
+            self.parent:removeChild(self)
+        end
     end, {args={},name="destroy",}),
 
     init = leap.registerfunc(function(self, id, state, client)
@@ -1722,28 +1740,7 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
                    
         rpc(self, self._askPermission, true)
         rpc(self, self._created, true)
-
-        RegisterNetEvent("Utility:Net:RemoveStateListener", leap.registerfunc(function(uNetId, __source)
-            if not source then
-                source = __source
-            end
-
-            if UtilityNet.DoesUNetIdExist(uNetId) then
-                Citizen.Wait(100)
-                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
-    
-                if not listeners or #listeners == 0 then
-                    self:destroyNetId()
-                end
-            end
-        end, {args={{name = "uNetId"},{name = "__source"},},name="RegisterNetEvent",}))
-
-        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
-            if uNetId == self.id then
-                self:destroy()
-            end
-        end)
-    end, {args={{name = "uNetId"},},name="constructor",}),
+    end, {args={{name = "coords"},{name = "rotation"},{name = "options"},},name="constructor",}),
 
     callOnAll = leap.registerfunc(function(self, ...)
         if not self.netId then
@@ -1811,6 +1808,31 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
     end, {args={},name="_askPermission",has_return=true,})
 }, BaseEntity)
 
+AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+    local entity = Entities:get(uNetId)
+    if entity and _leap_internal_is_operator(entity,  BaseEntityOneSync) then
+        entity:destroy()
+    end
+end)
+
+RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
+    if not source then
+        source = __source
+    end
+
+    if UtilityNet.DoesUNetIdExist(uNetId) then
+        local entity = Entities:get(uNetId)
+        if entity and _leap_internal_is_operator(entity,  BaseEntityOneSync) then
+            Citizen.Wait(100)
+            local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+            if not listeners or #listeners == 0 then
+                entity:destroyNetId()
+            end
+        end
+    end
+end)
+
 
 
  
@@ -1822,7 +1844,7 @@ local disableTimeoutNext = false
  
  GetCallbacks = leap.registerfunc(function()
     return callbacks
-end, {args={},name="GetCallbacks",has_return=true,});GetCallbacks = rpc(GetCallbacks, true) or GetCallbacks;
+end, {args={{name = "uNetId"},{name = "__source"},},name="GetCallbacks",has_return=true,});GetCallbacks = rpc(GetCallbacks, true) or GetCallbacks;
 
 GenerateCallbackId = leap.registerfunc(function()
     return "cb"..GetHashKey(tostring(math.random()) .. GetGameTimer())
