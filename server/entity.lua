@@ -378,27 +378,6 @@ class BaseEntityOneSync extends BaseEntity {
         -- TODO: fix leap not running decorators of parent when extending class
         rpc(self, self._askPermission, true)
         rpc(self, self._created, true)
-
-        RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
-            if not source then
-                source = __source
-            end
-
-            if uNetId == self.id and UtilityNet.DoesUNetIdExist(uNetId) then
-                Citizen.Wait(100)
-                local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
-    
-                if not listeners or #listeners == 0 then
-                    self:destroyNetId()
-                end
-            end
-        end)
-
-        AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
-            if uNetId == self.id then
-                self:destroy()
-            end
-        end)
     end,
 
     callOnAll = function(...)
@@ -466,3 +445,28 @@ class BaseEntityOneSync extends BaseEntity {
         return false
     end
 }
+
+AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
+    local entity = Entities:get(uNetId)
+    if entity and entity is BaseEntityOneSync then
+        entity:destroy()
+    end
+end)
+
+RegisterNetEvent("Utility:Net:RemoveStateListener", function(uNetId, __source)
+    if not source then
+        source = __source
+    end
+
+    if UtilityNet.DoesUNetIdExist(uNetId) then
+        local entity = Entities:get(uNetId)
+        if entity and entity is BaseEntityOneSync then
+            Citizen.Wait(100)
+            local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
+    
+            if not listeners or #listeners == 0 then
+                entity:destroyNetId()
+            end
+        end
+    end
+end)
