@@ -384,7 +384,7 @@ class BaseEntityOneSync extends BaseEntity {
                 source = __source
             end
 
-            if UtilityNet.DoesUNetIdExist(uNetId) then
+            if uNetId == self.id and UtilityNet.DoesUNetIdExist(uNetId) then
                 Citizen.Wait(100)
                 local listeners = exports["utility_lib"]:GetEntityListeners(uNetId)
     
