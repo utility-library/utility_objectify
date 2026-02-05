@@ -167,6 +167,10 @@ class BaseEntity {
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
+
+        if self.parent then
+            self.parent:removeChild(self)
+        end
     end,
 
     init = function(id, state, client)
