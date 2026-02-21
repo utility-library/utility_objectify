@@ -1,3 +1,4 @@
+-- v1.1
 class EntitiesSingleton {
     list = {},
 
@@ -21,16 +22,20 @@ class EntitiesSingleton {
         return self.list[id]
     end,
 
-    waitFor = function(id: number, timeout: number = 5000)
+    waitFor = function(caller: BaseEntity, id: number, timeout: number = 5000)
         local start = GetGameTimer()
 
-        while not self.list[id] do
+        while not self.list[id] and DoesEntityExist(caller.obj) do
             if GetGameTimer() - start > timeout then
-                throw new Error("${type(self)}: Child ${childId} not found after ${timeout}ms, skipping")
+                throw new Error("${type(self)}: Entity ${tostring(id)} not found after ${timeout}ms, skipping")
                 return nil
             end
 
             Wait(0)
+        end
+
+        if not DoesEntityExist(caller.obj) then
+            return
         end
 
         return self.list[id]

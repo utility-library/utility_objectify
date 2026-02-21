@@ -80,7 +80,7 @@ children_mt = {
             return nil
         end
 
-        local entity = Entities:waitFor(self._state.children[name])
+        local entity = Entities:waitFor(self, self._state.children[name])
         entity.parent = self._parent
 
         return entity
@@ -148,7 +148,7 @@ class BaseEntity {
         if load then return end
 
         if parent then
-            self.parent = Entities:waitFor(parent)
+            self.parent = Entities:waitFor(self, parent)
         else
             self.parent = nil
         end
@@ -159,7 +159,7 @@ class BaseEntity {
         if load then return end
 
         if root then
-            self.root = Entities:waitFor(root)
+            self.root = Entities:waitFor(self, root)
         else
             self.root = nil
         end
@@ -170,11 +170,11 @@ class BaseEntity {
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if self.state.parent then
-            self.parent = Entities:waitFor(self.state.parent)
+            self.parent = Entities:waitFor(self, self.state.parent)
         end
 
         if self.state.root then
-            self.root = Entities:waitFor(self.state.root)
+            self.root = Entities:waitFor(self, self.state.root)
         end
 
         if not self.isPlugin then
