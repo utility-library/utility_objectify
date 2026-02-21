@@ -137,20 +137,24 @@ _leap_internal_classBuilder("EntitiesSingleton",{
         return self.list[id]
     end, {args={{name = "id"},},name="get",has_return=true,}),
 
-    waitFor = leap.registerfunc(function(self, id, timeout)if type(id) ~= "number" then error('id: must be (number) but got '..type(id)..'', 2) end;if timeout == nil then timeout = 5000 end;if type(timeout) ~= "number" then error('timeout: must be (number) but got '..type(timeout)..'', 2) end;
+    waitFor = leap.registerfunc(function(self, caller, id, timeout)if _type(caller) ~= "table" and not _leap_internal_is_operator(caller, BaseEntity) then error('caller: must be (BaseEntity) or a derived class but got '..type(caller)..'', 2) end;if type(id) ~= "number" then error('id: must be (number) but got '..type(id)..'', 2) end;if timeout == nil then timeout = 5000 end;if type(timeout) ~= "number" then error('timeout: must be (number) but got '..type(timeout)..'', 2) end;
         local start = GetGameTimer()
 
-        while not self.list[id] do
+        while not self.list[id] and DoesEntityExist(caller.obj) do
             if GetGameTimer() - start > timeout then
-                error(tostring(Error(""..(type(self))..": Child "..(childId).." not found after "..(timeout).."ms, skipping")))
+                error(tostring(Error(""..(type(self))..": Entity "..(tostring(id)).." not found after "..(timeout).."ms, skipping")))
                 return nil
             end
 
             Wait(0)
         end
 
+        if not DoesEntityExist(caller.obj) then
+            return
+        end
+
         return self.list[id]
-    end, {args={{name = "id"},{name = "timeout"},},name="waitFor",has_return=true,}),
+    end, {args={{name = "caller"},{name = "id"},{name = "timeout"},},name="waitFor",has_return=true,}),
 
     getBy = leap.registerfunc(function(self, key, value)if type(key) ~= "string" then error('key: must be (string) but got '..type(key)..'', 2) end;
         for _, entity in pairs(self.list) do

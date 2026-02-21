@@ -137,20 +137,24 @@ _leap_internal_classBuilder("EntitiesSingleton",{
         return self.list[id]
     end, {args={{name = "id"},},name="get",has_return=true,}),
 
-    waitFor = leap.registerfunc(function(self, id, timeout)if type(id) ~= "number" then error('id: must be (number) but got '..type(id)..'', 2) end;if timeout == nil then timeout = 5000 end;if type(timeout) ~= "number" then error('timeout: must be (number) but got '..type(timeout)..'', 2) end;
+    waitFor = leap.registerfunc(function(self, caller, id, timeout)if _type(caller) ~= "table" and not _leap_internal_is_operator(caller, BaseEntity) then error('caller: must be (BaseEntity) or a derived class but got '..type(caller)..'', 2) end;if type(id) ~= "number" then error('id: must be (number) but got '..type(id)..'', 2) end;if timeout == nil then timeout = 5000 end;if type(timeout) ~= "number" then error('timeout: must be (number) but got '..type(timeout)..'', 2) end;
         local start = GetGameTimer()
 
-        while not self.list[id] do
+        while not self.list[id] and DoesEntityExist(caller.obj) do
             if GetGameTimer() - start > timeout then
-                error(tostring(Error(""..(type(self))..": Child "..(childId).." not found after "..(timeout).."ms, skipping")))
+                error(tostring(Error(""..(type(self))..": Entity "..(tostring(id)).." not found after "..(timeout).."ms, skipping")))
                 return nil
             end
 
             Wait(0)
         end
 
+        if not DoesEntityExist(caller.obj) then
+            return
+        end
+
         return self.list[id]
-    end, {args={{name = "id"},{name = "timeout"},},name="waitFor",has_return=true,}),
+    end, {args={{name = "caller"},{name = "id"},{name = "timeout"},},name="waitFor",has_return=true,}),
 
     getBy = leap.registerfunc(function(self, key, value)if type(key) ~= "string" then error('key: must be (string) but got '..type(key)..'', 2) end;
         for _, entity in pairs(self.list) do
@@ -413,9 +417,9 @@ local  CombineHooks = leap.registerfunc(function(self, methodName, beforeName, a
         local before = self[beforeName]
         local after = self[afterName]
         
-        if before then before(self, ...) end
-        if main then main(self, ...) end
-        if after then return after(self, ...) end
+        if DoesEntityExist(self.obj) and before then before(self, ...) end
+        if DoesEntityExist(self.obj) and main then main(self, ...) end
+        if DoesEntityExist(self.obj) and after then return after(self, ...) end
     end, {args={{name = "self"},{name = "methodName"},{name = "beforeName"},{name = "afterName"},},name=methodName,has_return=true,})
 end, {args={},name="CombineHooks",})
 
@@ -482,7 +486,7 @@ children_mt = {
             return nil
         end
 
-        local entity = Entities:waitFor(self._state.children[name])
+        local entity = Entities:waitFor(self, self._state.children[name])
         entity.parent = self._parent
 
         return entity
@@ -550,7 +554,7 @@ children_mt = {
         if load then return end
 
         if parent then
-            self.parent = Entities:waitFor(parent)
+            self.parent = Entities:waitFor(self, parent)
         else
             self.parent = nil
         end
@@ -561,7 +565,7 @@ children_mt = {
         if load then return end
 
         if root then
-            self.root = Entities:waitFor(root)
+            self.root = Entities:waitFor(self, root)
         else
             self.root = nil
         end
@@ -572,11 +576,11 @@ children_mt = {
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if self.state.parent then
-            self.parent = Entities:waitFor(self.state.parent)
+            self.parent = Entities:waitFor(self, self.state.parent)
         end
 
         if self.state.root then
-            self.root = Entities:waitFor(self.state.root)
+            self.root = Entities:waitFor(self, self.state.root)
         end
 
         if not self.isPlugin then
@@ -1004,6 +1008,11 @@ local  CreateObjectScriptsInstances = leap.registerfunc(function(obj)
 end, {args={{name = "obj"},},name="CreateObjectScriptsInstances",has_return=true,})
 
 CallMethodForAllObjectScripts = leap.registerfunc(function(obj, method, ...)
+    if not DoesEntityExist(obj) then 
+        developer(tag, "Object ^4"..tostring(obj).."^0 no longer exist, ignoring call method "..method)
+        return
+    end
+
     local model = Entity(obj).state.model
     local scripts = GetScriptsForModel(model)
 
@@ -1273,13 +1282,17 @@ UtilityNet.OnRender(function(id, obj, model)
     local model = GetEntityModel(obj)
     Entity(obj).state:set("model", model, false)             
 
+    UtilityNet.PreserveEntity(id)
+
     CallMethodForAllObjectScripts(obj, "OnAwake")
     CallMethodForAllObjectScripts(obj, "OnSpawn")
     CallMethodForAllObjectScripts(obj, "AfterSpawn")
-
-          
-    Entity(obj).state:set("om_loaded", true, false)
-    UtilityNet.PreserveEntity(id)
+    
+              
+    if DoesEntityExist(obj) then
+              
+        Entity(obj).state:set("om_loaded", true, false)
+    end
 end)
 
 UtilityNet.OnUnrender(function(id, obj, model)

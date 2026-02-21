@@ -137,16 +137,20 @@ class EntitiesSingleton {
         return self.list[id]
     end,
 
-    waitFor = function(id: number, timeout: number = 5000)
+    waitFor = function(caller: BaseEntity, id: number, timeout: number = 5000)
         local start = GetGameTimer()
 
-        while not self.list[id] do
+        while not self.list[id] and DoesEntityExist(caller.obj) do
             if GetGameTimer() - start > timeout then
-                throw new Error("${type(self)}: Child ${childId} not found after ${timeout}ms, skipping")
+                throw new Error("${type(self)}: Entity ${tostring(id)} not found after ${timeout}ms, skipping")
                 return nil
             end
 
             Wait(0)
+        end
+
+        if not DoesEntityExist(caller.obj) then
+            return
         end
 
         return self.list[id]
@@ -413,9 +417,9 @@ local function CombineHooks(self, methodName, beforeName, afterName)
         local before = self[beforeName]
         local after = self[afterName]
         
-        if before then before(self, ...) end
-        if main then main(self, ...) end
-        if after then return after(self, ...) end
+        if DoesEntityExist(self.obj) and before then before(self, ...) end
+        if DoesEntityExist(self.obj) and main then main(self, ...) end
+        if DoesEntityExist(self.obj) and after then return after(self, ...) end
     end
 end
 
@@ -482,7 +486,7 @@ children_mt = {
             return nil
         end
 
-        local entity = Entities:waitFor(self._state.children[name])
+        local entity = Entities:waitFor(self, self._state.children[name])
         entity.parent = self._parent
 
         return entity
@@ -550,7 +554,7 @@ class BaseEntity {
         if load then return end
 
         if parent then
-            self.parent = Entities:waitFor(parent)
+            self.parent = Entities:waitFor(self, parent)
         else
             self.parent = nil
         end
@@ -561,7 +565,7 @@ class BaseEntity {
         if load then return end
 
         if root then
-            self.root = Entities:waitFor(root)
+            self.root = Entities:waitFor(self, root)
         else
             self.root = nil
         end
@@ -572,11 +576,11 @@ class BaseEntity {
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if self.state.parent then
-            self.parent = Entities:waitFor(self.state.parent)
+            self.parent = Entities:waitFor(self, self.state.parent)
         end
 
         if self.state.root then
-            self.root = Entities:waitFor(self.state.root)
+            self.root = Entities:waitFor(self, self.state.root)
         end
 
         if not self.isPlugin then
@@ -1004,6 +1008,11 @@ local function CreateObjectScriptsInstances(obj)
 end
 
 function CallMethodForAllObjectScripts(obj, method, ...)
+    if not DoesEntityExist(obj) then 
+        developer(tag, "Object ^4"..tostring(obj).."^0 no longer exist, ignoring call method "..method)
+        return
+    end
+
     local model = Entity(obj).state.model
     local scripts = GetScriptsForModel(model)
 
@@ -1273,13 +1282,17 @@ UtilityNet.OnRender(function(id, obj, model)
     local model = GetEntityModel(obj)
     Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
 
+    UtilityNet.PreserveEntity(id)
+
     CallMethodForAllObjectScripts(obj, "OnAwake")
     CallMethodForAllObjectScripts(obj, "OnSpawn")
     CallMethodForAllObjectScripts(obj, "AfterSpawn")
-
-    -- Used for tracking object loading state
-    Entity(obj).state:set("om_loaded", true, false)
-    UtilityNet.PreserveEntity(id)
+    
+    -- During the different calls the entity could have been deleted
+    if DoesEntityExist(obj) then
+        -- Used for tracking object loading state
+        Entity(obj).state:set("om_loaded", true, false)
+    end
 end)
 
 UtilityNet.OnUnrender(function(id, obj, model)
