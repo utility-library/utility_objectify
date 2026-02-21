@@ -194,6 +194,11 @@ local function CreateObjectScriptsInstances(obj)
 end
 
 function CallMethodForAllObjectScripts(obj, method, ...)
+    if not DoesEntityExist(obj) then 
+        developer(tag, "Object ^4"..tostring(obj).."^0 no longer exist, ignoring call method "..method)
+        return
+    end
+
     local model = Entity(obj).state.model
     local scripts = GetScriptsForModel(model)
 
@@ -463,13 +468,17 @@ UtilityNet.OnRender(function(id, obj, model)
     local model = GetEntityModel(obj)
     Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
 
+    UtilityNet.PreserveEntity(id)
+
     CallMethodForAllObjectScripts(obj, "OnAwake")
     CallMethodForAllObjectScripts(obj, "OnSpawn")
     CallMethodForAllObjectScripts(obj, "AfterSpawn")
-
-    -- Used for tracking object loading state
-    Entity(obj).state:set("om_loaded", true, false)
-    UtilityNet.PreserveEntity(id)
+    
+    -- During the different calls the entity could have been deleted
+    if DoesEntityExist(obj) then
+        -- Used for tracking object loading state
+        Entity(obj).state:set("om_loaded", true, false)
+    end
 end)
 
 UtilityNet.OnUnrender(function(id, obj, model)

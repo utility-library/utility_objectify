@@ -11,9 +11,9 @@ local function CombineHooks(self, methodName, beforeName, afterName)
         local before = self[beforeName]
         local after = self[afterName]
         
-        if before then before(self, ...) end
-        if main then main(self, ...) end
-        if after then return after(self, ...) end
+        if DoesEntityExist(self.obj) and before then before(self, ...) end
+        if DoesEntityExist(self.obj) and main then main(self, ...) end
+        if DoesEntityExist(self.obj) and after then return after(self, ...) end
     end
 end
 
