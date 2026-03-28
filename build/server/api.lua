@@ -114,6 +114,7 @@ end, {args={{name = "self"},{name = "fn"},{name = "key"},{name = "ignoreRenderin
 
 
  
+ 
 _leap_internal_classBuilder("EntitiesSingleton",{
     list = {},
 

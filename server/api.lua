@@ -114,6 +114,7 @@ end
 ------------------------------------
 
 --BUILD @utility_objectify/shared/entitiesSingleton.lua
+-- v1.1
 class EntitiesSingleton {
     list = {},
 

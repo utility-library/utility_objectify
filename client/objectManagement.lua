@@ -496,13 +496,13 @@ UtilityNet.OnUnrender(function(id, obj, model)
     DeleteEntity(obj)
 end)
 
-RegisterNetEvent("Utility:Net:EntityCreated", function(_, uNetId, model, coords, rotation)
-    if registeredObjects[uNetId] then
+RegisterNetEvent("Utility:Net:EntityCreated", function(_, object)
+    if registeredObjects[object.id] then
         return
     end
 
-    rotation = rotation or vec3(0, 0, 0)
-    CallOnRegister(uNetId, model, coords, rotation)
+    rotation = object?.options?.rotation or vec3(0, 0, 0)
+    CallOnRegister(object.id, object.model, object.coords, rotation)
 end)
 
 RegisterNetEvent("Utility:Net:RequestDeletion", function(uNetId, model, coords, rotation)
