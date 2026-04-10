@@ -575,7 +575,12 @@ children_mt = {
     end, {args={{name = "root"},{name = "load"},},name="_OnRootChange",}),
 
     _BeforeOnSpawn = leap.registerfunc(function(self)
-        self.server = setmetatable({id = self.id, __type = type(self)}, server_rpc_mt)
+        if self.isPlugin then
+            self.server = setmetatable({id = self.id, __type = self.main.__type.."."..self.__type}, server_rpc_mt)
+            local plugins = setmetatable({id = self.id, __type = self.main.__type}, server_plugin_rpc_mt)
+            rawset(self.server, "plugins", plugins)  
+        end
+
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
 
         if self.state.parent then
