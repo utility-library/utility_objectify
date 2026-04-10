@@ -579,6 +579,8 @@ children_mt = {
             self.server = setmetatable({id = self.id, __type = self.main.__type.."."..self.__type}, server_rpc_mt)
             local plugins = setmetatable({id = self.id, __type = self.main.__type}, server_plugin_rpc_mt)
             rawset(self.server, "plugins", plugins)  
+        else
+            self.server = setmetatable({id = self.id, __type = self.__type}, server_rpc_mt)
         end
 
         self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
