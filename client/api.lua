@@ -686,7 +686,31 @@ class BaseEntity {
         end
 
         return children
-    end
+    end,
+
+    getCoords = function()
+        return GetEntityCoords(self.obj)
+    end,
+
+    getCoordsOffset = function(offset)
+        return GetOffsetFromEntityInWorldCoords(self.obj, offset)
+    end,
+
+    setCoords = function(coords)
+        if self.id then
+            UtilityNet.SetEntityCoords(self.id, coords)
+        end
+    end,
+
+    getRotation = function()
+        return GetEntityRotation(self.obj)
+    end,
+
+    setRotation = function(rotation)
+        if self.id then
+            UtilityNet.SetEntityRotation(self.id, rotation)
+        end
+    end,
 }
 
 class BaseEntityOneSync extends BaseEntity {

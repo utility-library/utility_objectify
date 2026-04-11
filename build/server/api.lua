@@ -663,6 +663,37 @@ local EMPTY_CHILDREN = {}
         end)
     end, {args={{name = "coords"},{name = "rotation"},{name = "options"},},name="create",}),
 
+    getCoords = leap.registerfunc(function(self)
+        if self.id then
+            return UtilityNet.GetEntityCoords(self.id)
+        end
+    end, {args={},name="getCoords",has_return=true,}),
+
+    getCoordsOffset = leap.registerfunc(function(self, offset)
+        local pos = self:getCoords()
+        local rot = self:getRotation()
+
+        return GetOffsetFromPositionInWorldCoords(pos, rot, offset)
+    end, {args={{name = "offset"},},name="getCoordsOffset",has_return=true,}),
+
+    setCoords = leap.registerfunc(function(self, coords)
+        if self.id then
+            UtilityNet.SetEntityCoords(self.id, coords)
+        end
+    end, {args={{name = "coords"},},name="setCoords",}),
+
+    getRotation = leap.registerfunc(function(self)
+        if self.id then
+            return UtilityNet.GetEntityRotation(self.id) or vector3(0, 0, 0)
+        end
+    end, {args={},name="getRotation",has_return=true,}),
+
+    setRotation = leap.registerfunc(function(self, rotation)
+        if self.id then
+            UtilityNet.SetEntityRotation(self.id, rotation)
+        end
+    end, {args={{name = "rotation"},},name="setRotation",}),
+
     addChild = leap.registerfunc(function(self, name, child)if type(name) ~= "string" then error('name: must be (string) but got '..type(name)..'', 2) end;if _type(child) ~= "table" and not _leap_internal_is_operator(child, BaseEntity) then error('child: must be (BaseEntity) or a derived class but got '..type(child)..'', 2) end;
         if not child.id then
             error(""..(type(self))..": trying to add a child that hasnt been created yet")
