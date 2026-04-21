@@ -928,9 +928,21 @@ local function CallOnRegister(uNetId, model, coords, rotation)
 end
 
 local function CreateObjectScriptInstance(obj, scriptIndex, source)
-    local model = GetEntityModel(obj)
-    local uNetId = UtilityNet.GetUNetIdFromEntity(obj)
-    local scripts = GetScriptsForModel(model)
+    local model = nil
+    local uNetId = nil
+    local scripts = nil
+
+    if type(obj) == "table" then
+        model = obj.model
+        uNetId = obj.netId
+        scripts = obj.scripts
+        obj = obj.obj
+    else
+        model = GetEntityModel(obj)
+        uNetId = UtilityNet.GetUNetIdFromEntity(obj)
+        scripts = GetScriptsForModel(model)
+    end
+
 
     if not scripts then
         developer(tag, "Model ^4"..model.."^0 has no scripts, skipping script index "..scriptIndex)
@@ -938,7 +950,7 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     end
 
     local script = scripts[scriptIndex]
-
+    
     -- Script already registered, skipping
     if objectScripts[obj][script.name] then
         developer("^1ObjectManagement^0", "Skipping ^1"..GetEntityArchetypeName(obj).."^0 since is already registered > ^5"..script.name.."^0 for "..obj)
@@ -966,7 +978,6 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     instance.state = UtilityNet.State(uNetId)
     instance.id = uNetId
     instance.obj = obj
-    instance.model = GetEntityArchetypeName(obj)
 
     if script.name ~= "main" then
         local main = objectScripts[obj]["main"]
@@ -1002,37 +1013,24 @@ local function CreateObjectScriptInstance(obj, scriptIndex, source)
     return instance
 end
 
-local function CreateObjectScriptsInstances(obj)
-    local model = GetEntityModel(obj)
-    local scripts = GetScriptsForModel(model)
-
-    if not scripts then
-        developer(tag, "Model ^4"..model.."^0 has no scripts, skipping scripts instances creation")
+local function CreateObjectScriptsInstances(objInfo)
+    if not objInfo.scripts then
+        developer(tag, "Model ^4"..objInfo.model.."^0 has no scripts, skipping scripts instances creation")
         return false
     end
     
-    objectScripts[obj] = {}
-
-    -- Find main script (since someone can register the main script after the plugins)
-    local mainIndex = nil
-
-    for k,v in ipairs(scripts) do
-        if v.name == "main" then
-            mainIndex = k
-            break
-        end
-    end
+    objectScripts[objInfo.obj] = {}
 
     -- Create main script before possible plugins
-    local main = CreateObjectScriptInstance(obj, mainIndex, "GetInstance")
+    local main = CreateObjectScriptInstance(objInfo, 1, "GetInstance")
     main.plugins = {} -- Allow plugins to register themself
 
-    objectScripts[obj]["main"] = main
+    objectScripts[objInfo.obj]["main"] = main
 
     -- Create script instances in registration order (only plugins)
-    for k,v in ipairs(scripts) do
+    for k,v in ipairs(objInfo.scripts) do
         if v.name ~= "main" then
-            objectScripts[obj][v.name] = CreateObjectScriptInstance(obj, k, "CreateInstances")
+            objectScripts[objInfo.obj][v.name] = CreateObjectScriptInstance(objInfo, k, "CreateInstances")
         end
     end
 
@@ -1040,13 +1038,18 @@ local function CreateObjectScriptsInstances(obj)
 end
 
 function CallMethodForAllObjectScripts(obj, method, ...)
-    if not DoesEntityExist(obj) then 
-        developer(tag, "Object ^4"..tostring(obj).."^0 no longer exist, ignoring call method "..method)
-        return
+    local model = nil
+    local scripts = nil
+    
+    if type(obj) == "table" then
+        model = obj.model
+        scripts = obj.scripts
+        obj = obj.obj
+    else
+        model = Entity(obj).state.model
+        scripts = GetScriptsForModel(model)
     end
 
-    local model = Entity(obj).state.model
-    local scripts = GetScriptsForModel(model)
 
     if not scripts then
         developer(tag, "Model ^4"..tostring(model).."^0 has no scripts, ignoring call method "..method)
@@ -1063,11 +1066,11 @@ function CallMethodForAllObjectScripts(obj, method, ...)
         if not instance then -- Instance was deleted in the meantime
             break
         end
-
+        
         if instance[method] then
             instance[method](instance, ...)
         end
-
+        
         -- Propagate events also for custom hooks
         for hookMethod, hook in pairs(customHooks) do
             -- If this script instance and the hook implements the method
@@ -1099,11 +1102,18 @@ function RegisterObjectScript(model, name, script)
         developer(tag, "Model ^4"..model.."^0 > ^5"..name.."^0 is already registered, skipping")
         return
     end
-        
-    table.insert(modelScripts[hashmodel], {
-        script = script,
-        name = name
-    })
+    
+    if name == "main" then
+        table.insert(modelScripts[hashmodel], 1, {
+            script = script,
+            name = name
+        })
+    else
+        table.insert(modelScripts[hashmodel], {
+            script = script,
+            name = name
+        })
+    end
 
     -- Register script for already spawned objects
     local scriptIndex = #modelScripts[hashmodel]
@@ -1165,9 +1175,10 @@ end
 
 function GetObjectScriptInstance(obj, name, nocheck)
     if not obj then error("GetObjectScriptInstance: passed obj is nil, name: "..name) end
-    if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
-
+    
     if not nocheck then
+        if not UtilityNet.GetUNetIdFromEntity(obj) then return end -- Object is not networked
+
         -- Wait that the object is rendered
         local start = GetGameTimer()
         while not UtilityNet.IsEntityRendered(obj) do
@@ -1178,9 +1189,9 @@ function GetObjectScriptInstance(obj, name, nocheck)
         end
     end
 
-    local model = GetEntityModel(obj)
-
+    
     if not objectScripts[obj] then
+        local model = GetEntityModel(obj)
         -- Check if script should be loaded
         if _IsObjectScriptRegistered(model, name) then
             -- Wait for script to be loaded
@@ -1304,21 +1315,30 @@ UtilityNet.OnRender(function(id, obj, model)
         Citizen.Await(registeredObjects[id])
     end
 
-    local created = CreateObjectScriptsInstances(obj)
+
+    local model = GetEntityModel(obj)
+
+    local objInfo = {
+        obj = obj,
+        netId = id,
+        model = model,
+        scripts = GetScriptsForModel(model)
+    }
+
+    local created = CreateObjectScriptsInstances(objInfo)
 
     if not created then
         return
     end
-    Entity(obj).state:set("om_scripts_created", true, false)
 
-    local model = GetEntityModel(obj)
+    Entity(obj).state:set("om_scripts_created", true, false)
     Entity(obj).state:set("model", model, false) -- Preserve original model to fetch scripts (since can be replace with CreateModelSwap)
 
     UtilityNet.PreserveEntity(id)
 
-    CallMethodForAllObjectScripts(obj, "OnAwake")
-    CallMethodForAllObjectScripts(obj, "OnSpawn")
-    CallMethodForAllObjectScripts(obj, "AfterSpawn")
+    CallMethodForAllObjectScripts(objInfo, "OnAwake")
+    CallMethodForAllObjectScripts(objInfo, "OnSpawn")
+    CallMethodForAllObjectScripts(objInfo, "AfterSpawn")
     
     -- During the different calls the entity could have been deleted
     if DoesEntityExist(obj) then
