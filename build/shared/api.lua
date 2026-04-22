@@ -1023,9 +1023,12 @@ local  CreateObjectScriptsInstances = leap.registerfunc(function(objInfo)
     
     objectScripts[objInfo.obj] = {}
 
+    local model_name = GetEntityArchetypeName(objInfo.obj)
+
           
     local main = CreateObjectScriptInstance(objInfo, 1, "GetInstance")
     main.plugins = {}      
+    main.model = model_name
 
     objectScripts[objInfo.obj]["main"] = main
 
@@ -1033,6 +1036,7 @@ local  CreateObjectScriptsInstances = leap.registerfunc(function(objInfo)
     for k,v in ipairs(objInfo.scripts) do
         if v.name ~= "main" then
             objectScripts[objInfo.obj][v.name] = CreateObjectScriptInstance(objInfo, k, "CreateInstances")
+            objectScripts[objInfo.obj][v.name].model = model_name
         end
     end
 

@@ -175,9 +175,12 @@ local function CreateObjectScriptsInstances(objInfo)
     
     objectScripts[objInfo.obj] = {}
 
+    local model_name = GetEntityArchetypeName(objInfo.obj)
+
     -- Create main script before possible plugins
     local main = CreateObjectScriptInstance(objInfo, 1, "GetInstance")
     main.plugins = {} -- Allow plugins to register themself
+    main.model = model_name
 
     objectScripts[objInfo.obj]["main"] = main
 
@@ -185,6 +188,7 @@ local function CreateObjectScriptsInstances(objInfo)
     for k,v in ipairs(objInfo.scripts) do
         if v.name ~= "main" then
             objectScripts[objInfo.obj][v.name] = CreateObjectScriptInstance(objInfo, k, "CreateInstances")
+            objectScripts[objInfo.obj][v.name].model = model_name
         end
     end
 
