@@ -174,7 +174,7 @@ class BaseEntity {
             self.server = setmetatable({id = self.id, __type = self.__type}, server_rpc_mt)
         end
 
-        self.children = setmetatable({_state = self.state, _parent = self}, children_mt)
+        self.children = setmetatable({_state = self.state, _parent = self, obj = self.obj}, children_mt)
 
         if self.state.parent then
             self.parent = Entities:waitFor(self, self.state.parent)
