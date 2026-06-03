@@ -72,6 +72,11 @@ children_mt = {
     __mode = "v",
 
     getEntity = function(self, name)
+        -- Caching
+        if rawget(self, "child_"..name) then
+            return rawget(self, "child_"..name)
+        end
+
         if not self._state.children then
             return nil
         end
@@ -80,21 +85,29 @@ children_mt = {
             return nil
         end
 
-        local entity = Entities:waitFor(self, self._state.children[name])
-        entity.parent = self._parent
+        try 
+            local entity = Entities:waitFor(self._parent, self._parent.state.children[name])
+            entity.parent = self._parent
 
-        return entity
+            rawset(self, "child_"..name, entity)
+            
+            return entity
+        catch e then
+            if e:find("not found") then
+                error("${type(self._parent)}: Child ${name} (${self._parent.state.children[name]}) not found", 2)
+            end
+        end
     end,
 
     __pairs = function(self)
-        if not self._state.children then
+        if not self._parent.state.children then
             return function() end
         end
 
         local meta = getmetatable(self)
 
         return function(t, k)
-            local k,v = next(self._state.children, k)
+            local k,v = next(self._parent.state.children, k)
             if not v or not k then return nil end
 
             local entity = meta.getEntity(self, k)
@@ -106,11 +119,11 @@ children_mt = {
     end,
 
     __tostring = function(self)
-        if not self._state.children then
+        if not self._parent.state.children then
             return "[]"
         end
 
-        return json.encode(self._state.children)
+        return json.encode(self._parent.state.children)
     end,
 
     __ipairs = function(self)
@@ -119,11 +132,11 @@ children_mt = {
     end,
 
     __len = function(self)
-        if not self._state.children then
+        if not self._parent.state.children then
             return 0
         end
 
-        return #self._state.children
+        return #self._parent.state.children
     end,
 
     __index = function(self, key)
@@ -174,7 +187,7 @@ class BaseEntity {
             self.server = setmetatable({id = self.id, __type = self.__type}, server_rpc_mt)
         end
 
-        self.children = setmetatable({_state = self.state, _parent = self, obj = self.obj}, children_mt)
+        self.children = setmetatable({_parent = self}, children_mt)
 
         if self.state.parent then
             self.parent = Entities:waitFor(self, self.state.parent)
@@ -230,21 +243,27 @@ class BaseEntity {
     end,
 
     getChild = function(path: string)
-        if path:find("/") then
-            local child = self
+        try 
+            if path:find("/") then
+                local child = self
 
-            for str in path:gmatch("([^/]+)") do
-                if not child or not child.children then
-                    return nil
+                for str in path:gmatch("([^/]+)") do
+                    if not child or not child.children then
+                        return nil
+                    end
+
+                    child = child.children[str]
                 end
 
-                child = child.children[str]
+                return child
             end
 
-            return child
+            return self.children[path]
+        catch e then
+            if e:find("not found") then
+                error("${type(self)}:getChild: Child at path \"${path}\" not found", 2)
+            end
         end
-
-        return self.children[path]
     end,
 
     getChildBy = function(key: string, value)

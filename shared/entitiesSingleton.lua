@@ -27,7 +27,7 @@ class EntitiesSingleton {
 
         while not self.list[id] and DoesEntityExist(caller.obj) do
             if GetGameTimer() - start > timeout then
-                throw new Error("${type(self)}: Entity ${tostring(id)} not found after ${timeout}ms, skipping")
+                error("${type(caller)}: Entity ${tostring(id)} not found after ${timeout}ms, skipping", 2)
                 return nil
             end
 
