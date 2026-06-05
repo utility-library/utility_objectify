@@ -486,11 +486,11 @@ children_mt = {
             return rawget(self, "child_"..name)
         end
 
-        if not self._state.children then
+        if not self._parent.state.children then
             return nil
         end
 
-        if not self._state.children[name] then
+        if not self._parent.state.children[name] then
             return nil
         end
 
@@ -1776,19 +1776,33 @@ local EMPTY_CHILDREN = {}
             self.children[childOrName] = nil
             self.state.children[childOrName] = nil
         else
+            local path = nil
+
             for name, child in pairs(self.children) do
                 if child == childOrName then
-                    self.children[name] = nil
+                    path = name
                     break
                 end
             end
             
-            for name, id in pairs(self.state.children) do
-                if id == childOrName.id then
-                    self.state.children[name] = nil
-                    break
+            if not path and self.state.children then
+                for name, id in pairs(self.state.children) do
+                    if id == childOrName.id then
+                        path = name
+                        break
+                    end
                 end
             end
+
+            if not path then
+                return
+            end
+            
+            if self.state.children then
+                self.state.children[path] = nil
+            end
+
+            self.children[path] = nil
         end
     end, {args={{name = "childOrName"},},name="removeChild",}),
 

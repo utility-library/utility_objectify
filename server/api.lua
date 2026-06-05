@@ -733,19 +733,33 @@ class BaseEntity {
             self.children[childOrName] = nil
             self.state.children[childOrName] = nil
         else
+            local path = nil
+
             for name, child in pairs(self.children) do
                 if child == childOrName then
-                    self.children[name] = nil
+                    path = name
                     break
                 end
             end
             
-            for name, id in pairs(self.state.children) do
-                if id == childOrName.id then
-                    self.state.children[name] = nil
-                    break
+            if not path and self.state.children then
+                for name, id in pairs(self.state.children) do
+                    if id == childOrName.id then
+                        path = name
+                        break
+                    end
                 end
             end
+
+            if not path then
+                return
+            end
+            
+            if self.state.children then
+                self.state.children[path] = nil
+            end
+
+            self.children[path] = nil
         end
     end,
 
