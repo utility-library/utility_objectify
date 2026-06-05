@@ -77,11 +77,11 @@ children_mt = {
             return rawget(self, "child_"..name)
         end
 
-        if not self._state.children then
+        if not self._parent.state.children then
             return nil
         end
 
-        if not self._state.children[name] then
+        if not self._parent.state.children[name] then
             return nil
         end
 
