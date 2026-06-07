@@ -615,7 +615,7 @@ class BaseEntity {
 
         if self.plugins then
             for k,v in pairs(self.plugins) do
-                v:init(id, state)
+                v:init(id, state, client.plugins[k])
             end
         end
     end,
