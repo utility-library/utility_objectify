@@ -14,6 +14,9 @@ function model(_class, model, abstract)
 
                     return obj
                 end
+
+                local normalized = v:gsub("UtilityNet:%w+:","")
+                _class.__prototype[normalized] = _class.__prototype[v]
             end
         end
 
