@@ -15,6 +15,9 @@ model = leap.registerfunc(function(_class, model, abstract)
 
                     return obj
                 end, {args={{name = "_class"},{name = "model"},{name = "abstract"},},name=v,has_return=true,})
+
+                local normalized = v:gsub("UtilityNet:%w+:","")
+                _class.__prototype[normalized] = _class.__prototype[v]
             end
         end
 
@@ -608,6 +611,11 @@ children_mt = {
 
         if not self.isPlugin then
             Entities:add(self)
+        end
+
+                     
+        if self.isPlugin then
+            self.obj = self.main.obj
         end
     end, {args={},name="_BeforeOnSpawn",}),
 

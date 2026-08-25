@@ -15,6 +15,9 @@ function model(_class, model, abstract)
 
                     return obj
                 end
+
+                local normalized = v:gsub("UtilityNet:%w+:","")
+                _class.__prototype[normalized] = _class.__prototype[v]
             end
         end
 
@@ -606,6 +609,11 @@ class BaseEntity {
 
         if not self.isPlugin then
             Entities:add(self)
+        end
+
+        -- Always fetch object from main instance, since main instance can be a BaseEntityOneSync!
+        if self.isPlugin then
+            self.obj = self.main.obj
         end
     end,
 

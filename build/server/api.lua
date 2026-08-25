@@ -15,6 +15,9 @@ model = leap.registerfunc(function(_class, model, abstract)
 
                     return obj
                 end, {args={{name = "_class"},{name = "model"},{name = "abstract"},},name=v,has_return=true,})
+
+                local normalized = v:gsub("UtilityNet:%w+:","")
+                _class.__prototype[normalized] = _class.__prototype[v]
             end
         end
 
