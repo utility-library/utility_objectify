@@ -303,6 +303,11 @@ local function rpc_entity(className, fn, _return)
         local tag = "${ogname}(${source})"
 
         if not entity then
+            -- A OneSync entity can be destroyed while a client is still asking to spawn it
+            if ogname == "_askPermission" then
+                return false
+            end
+
             error("${tag}: Entity with id ${tostring(id)} does not exist")
             return
         end
@@ -414,16 +419,22 @@ IsClient = true
 
 local callbacksLoaded = false
 
-local function CombineHooks(self, methodName, beforeName, afterName)
+local function CombineHooks(self, methodName, beforeName, afterName, existanceCheck)
     local main = self[methodName]
 
     self[methodName] = function(...)
         local before = self[beforeName]
         local after = self[afterName]
-        
-        if DoesEntityExist(self.obj) and before then before(self, ...) end
-        if DoesEntityExist(self.obj) and main then main(self, ...) end
-        if DoesEntityExist(self.obj) and after then return after(self, ...) end
+    
+        if existanceCheck then
+            if self:isAlive() and before then before(self, ...) end
+            if self:isAlive() and main then main(self, ...) end
+            if self:isAlive() and after then return after(self, ...) end
+        else
+            if before then before(self, ...) end
+            if main then main(self, ...) end
+            if after then return after(self, ...) end
+        end
     end
 end
 
@@ -560,10 +571,11 @@ class BaseEntity {
     server = nil,
     children = nil,
     __stateChangeHandler = nil,
+    __destroyed = false,
 
     constructor = function()
-        CombineHooks(self, "OnSpawn", "_BeforeOnSpawn", "_AfterOnSpawn")
-        CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
+        CombineHooks(self, "OnSpawn", "_BeforeOnSpawn", "_AfterOnSpawn", true)
+        CombineHooks(self, "OnDestroy", "_BeforeOnDestroy", "_AfterOnDestroy")
     end,
 
     @state("parent")
@@ -647,7 +659,20 @@ class BaseEntity {
         end
     end,
 
+    _BeforeOnDestroy = function()
+        self.state = setmetatable({}, {
+            __index = function(_, key)
+                error("${type(self)}(${tostring(self.id)}): tried to read state.${tostring(key)} after the entity was destroyed, please check entity existance first", 2)
+            end,
+            __newindex = function(_, key)
+                error("${type(self)}(${tostring(self.id)}): tried to write state.${tostring(key)} after the entity was destroyed, please check entity existance first", 2)
+            end
+        })
+    end,
+
     _AfterOnDestroy = function()
+        self.__destroyed = true
+
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
@@ -738,6 +763,14 @@ class BaseEntity {
             UtilityNet.SetEntityRotation(self.id, rotation)
         end
     end,
+
+    isAlive = function()
+        if self.isPlugin and not self.main:isAlive() then
+            return false
+        end
+
+        return not self.__destroyed and DoesEntityExist(self.obj)
+    end,
 }
 
 class BaseEntityOneSync extends BaseEntity {
@@ -768,21 +801,40 @@ class BaseEntityOneSync extends BaseEntity {
     _BeforeOnSpawn = function()
         self.super:_BeforeOnSpawn()
 
-        local type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
+        local _type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
         self.model = model 
 
-        if not self.state.netId or not NetworkDoesNetworkIdExist(self.state.netId) then
+        if not self.state.netId then
             local allowed = self.server:_askPermission()
 
             if allowed then
-                self:_CreateOneSyncEntity(type)
+                self:_CreateOneSyncEntity(_type)
+
+                while not self.state.netId do
+                    Wait(0)
+                end
             end
         end
+        
+        local start = GetGameTimer()
+        while not NetworkDoesEntityExistWithNetworkId(self.state.netId) or not NetworkDoesNetworkIdExist(self.state.netId) do
+            if not DoesEntityExist(self.obj) then
+                self.__destroyed = true
+                return
+            end
 
-        while not self.state.netId do
+            if GetGameTimer() - start > 5000 then
+                if not self.state.netId then
+                    self.__destroyed = true
+                    return
+                end
+
+                error("BaseEntityOneSync("..tostring(type(self)).."): Failed to fetch entity from netId "..tostring(self.state.id).." after 5 seconds", 2)
+                return
+            end
             Wait(0)
         end
-
+        
         self._obj = self.obj
         self.obj = NetworkGetEntityFromNetworkId(self.state.netId)
         self.netId = self.state.netId
@@ -1369,6 +1421,13 @@ UtilityNet.OnRender(function(id, obj, model)
 
     CallMethodForAllObjectScripts(objInfo, "OnAwake")
     CallMethodForAllObjectScripts(objInfo, "OnSpawn")
+
+    local main = GetObjectScriptInstance(obj, "main", true)
+
+    if main and main.isAlive and not main:isAlive() then
+        return
+    end
+
     CallMethodForAllObjectScripts(objInfo, "AfterSpawn")
     
     -- During the different calls the entity could have been deleted

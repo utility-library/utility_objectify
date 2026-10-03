@@ -303,6 +303,11 @@ local  rpc_entity = leap.registerfunc(function(className, fn, _return)
         local tag = ""..(ogname).."("..(source)..")"
 
         if not entity then
+                           
+            if ogname == "_askPermission" then
+                return false
+            end
+
             error(""..(tag)..": Entity with id "..(tostring(id)).." does not exist")
             return
         end
@@ -586,7 +591,14 @@ local EMPTY_CHILDREN = {}
     init = leap.registerfunc(function(self, id, state, client)
         self.id = id
         self.state = state
-        self.client = client
+
+        if self.isPlugin then
+            self.client = setmetatable({id = self.id, __type = self.main.__type.."."..self.__type}, client_rpc_mt)
+            local plugins = setmetatable({id = self.id, __type = self.main.__type}, client_plugin_rpc_mt)
+            rawset(self.client, "plugins", plugins)  
+        else
+            self.client = client
+        end
 
         if self.__listenedStates and next(self.__listenedStates) then
             local  onStateChange = leap.registerfunc(function(listeners, value, initial)
@@ -618,7 +630,7 @@ local EMPTY_CHILDREN = {}
 
         if self.plugins then
             for k,v in pairs(self.plugins) do
-                v:init(id, state, client.plugins[k])
+                v:init(id, state)
             end
         end
     end, {args={},name="init",}),

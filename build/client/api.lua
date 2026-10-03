@@ -303,6 +303,11 @@ local  rpc_entity = leap.registerfunc(function(className, fn, _return)
         local tag = ""..(ogname).."("..(source)..")"
 
         if not entity then
+                           
+            if ogname == "_askPermission" then
+                return false
+            end
+
             error(""..(tag)..": Entity with id "..(tostring(id)).." does not exist")
             return
         end
@@ -414,17 +419,23 @@ IsClient = true
 
 local callbacksLoaded = false
 
-local  CombineHooks = leap.registerfunc(function(self, methodName, beforeName, afterName)
+local  CombineHooks = leap.registerfunc(function(self, methodName, beforeName, afterName, existanceCheck)
     local main = self[methodName]
 
     self[methodName] = leap.registerfunc(function(...)
         local before = self[beforeName]
         local after = self[afterName]
-        
-        if DoesEntityExist(self.obj) and before then before(self, ...) end
-        if DoesEntityExist(self.obj) and main then main(self, ...) end
-        if DoesEntityExist(self.obj) and after then return after(self, ...) end
-    end, {args={{name = "self"},{name = "methodName"},{name = "beforeName"},{name = "afterName"},},name=methodName,has_return=true,})
+    
+        if existanceCheck then
+            if self:isAlive() and before then before(self, ...) end
+            if self:isAlive() and main then main(self, ...) end
+            if self:isAlive() and after then return after(self, ...) end
+        else
+            if before then before(self, ...) end
+            if main then main(self, ...) end
+            if after then return after(self, ...) end
+        end
+    end, {args={{name = "self"},{name = "methodName"},{name = "beforeName"},{name = "afterName"},{name = "existanceCheck"},},name=methodName,has_return=true,})
 end, {args={},name="CombineHooks",})
 
 local server_rpc_mt, server_plugin_rpc_mt, children_mt = nil  
@@ -560,10 +571,11 @@ children_mt = {
     server = nil,
     children = nil,
     __stateChangeHandler = nil,
+    __destroyed = false,
 
     constructor = leap.registerfunc(function(self)
-        CombineHooks(self, "OnSpawn", "_BeforeOnSpawn", "_AfterOnSpawn")
-        CombineHooks(self, "OnDestroy", nil, "_AfterOnDestroy")
+        CombineHooks(self, "OnSpawn", "_BeforeOnSpawn", "_AfterOnSpawn", true)
+        CombineHooks(self, "OnDestroy", "_BeforeOnDestroy", "_AfterOnDestroy")
     end, {args={},name="constructor",}),
 
     
@@ -647,7 +659,20 @@ children_mt = {
         end
     end, {args={},name="_AfterOnSpawn",}),
 
+    _BeforeOnDestroy = leap.registerfunc(function(self)
+        self.state = setmetatable({}, {
+            __index = leap.registerfunc(function(_, key)
+                error(""..(type(self)).."("..(tostring(self.id)).."): tried to read state."..(tostring(key)).." after the entity was destroyed, please check entity existance first", 2)
+            end, {args={{name = "_"},{name = "key"},},name="__index",}),
+            __newindex = leap.registerfunc(function(_, key)
+                error(""..(type(self)).."("..(tostring(self.id)).."): tried to write state."..(tostring(key)).." after the entity was destroyed, please check entity existance first", 2)
+            end, {args={{name = "_"},{name = "key"},},name="__newindex",})
+        })
+    end, {args={},name="_BeforeOnDestroy",}),
+
     _AfterOnDestroy = leap.registerfunc(function(self)
+        self.__destroyed = true
+
         if self.__stateChangeHandler then
             UtilityNet.RemoveStateBagChangeHandler(self.__stateChangeHandler)
         end
@@ -738,6 +763,14 @@ children_mt = {
             UtilityNet.SetEntityRotation(self.id, rotation)
         end
     end, {args={{name = "rotation"},},name="setRotation",}),
+
+    isAlive = leap.registerfunc(function(self)
+        if self.isPlugin and not self.main:isAlive() then
+            return false
+        end
+
+        return not self.__destroyed and DoesEntityExist(self.obj)
+    end, {args={},name="isAlive",has_return=true,}),
 }, {});BaseEntity = skipSerialize(BaseEntity, {"main", "isPlugin", "plugins", "server", "listenedStates"}) or BaseEntity;table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnParentChange", decoratorName = "state", args = {"parent"}});table.insert(BaseEntity.__prototype._leap_internal_decorators, {name = "_OnRootChange", decoratorName = "state", args = {"root"}});
 
 _leap_internal_classBuilder("BaseEntityOneSync",{
@@ -768,21 +801,40 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
     _BeforeOnSpawn = leap.registerfunc(function(self)
         BaseEntity.__prototype._BeforeOnSpawn(self)
 
-        local type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
+        local _type, model = self.model:match("^[^:]+:([^:]+):([^:]+)$")
         self.model = model 
 
-        if not self.state.netId or not NetworkDoesNetworkIdExist(self.state.netId) then
+        if not self.state.netId then
             local allowed = self.server:_askPermission()
 
             if allowed then
-                self:_CreateOneSyncEntity(type)
+                self:_CreateOneSyncEntity(_type)
+
+                while not self.state.netId do
+                    Wait(0)
+                end
             end
         end
+        
+        local start = GetGameTimer()
+        while not NetworkDoesEntityExistWithNetworkId(self.state.netId) or not NetworkDoesNetworkIdExist(self.state.netId) do
+            if not DoesEntityExist(self.obj) then
+                self.__destroyed = true
+                return
+            end
 
-        while not self.state.netId do
+            if GetGameTimer() - start > 5000 then
+                if not self.state.netId then
+                    self.__destroyed = true
+                    return
+                end
+
+                error("BaseEntityOneSync("..tostring(type(self)).."): Failed to fetch entity from netId "..tostring(self.state.id).." after 5 seconds", 2)
+                return
+            end
             Wait(0)
         end
-
+        
         self._obj = self.obj
         self.obj = NetworkGetEntityFromNetworkId(self.state.netId)
         self.netId = self.state.netId
@@ -1369,6 +1421,13 @@ UtilityNet.OnRender(function(id, obj, model)
 
     CallMethodForAllObjectScripts(objInfo, "OnAwake")
     CallMethodForAllObjectScripts(objInfo, "OnSpawn")
+
+    local main = GetObjectScriptInstance(obj, "main", true)
+
+    if main and main.isAlive and not main:isAlive() then
+        return
+    end
+
     CallMethodForAllObjectScripts(objInfo, "AfterSpawn")
     
               
