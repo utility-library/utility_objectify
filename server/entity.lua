@@ -176,7 +176,14 @@ class BaseEntity {
     init = function(id, state, client)
         self.id = id
         self.state = state
-        self.client = client
+
+        if self.isPlugin then
+            self.client = setmetatable({id = self.id, __type = self.main.__type.."."..self.__type}, client_rpc_mt)
+            local plugins = setmetatable({id = self.id, __type = self.main.__type}, client_plugin_rpc_mt)
+            rawset(self.client, "plugins", plugins) -- Caching
+        else
+            self.client = client
+        end
 
         if self.__listenedStates and next(self.__listenedStates) then
             local function onStateChange(listeners, value, initial)
@@ -208,7 +215,7 @@ class BaseEntity {
 
         if self.plugins then
             for k,v in pairs(self.plugins) do
-                v:init(id, state, client.plugins[k])
+                v:init(id, state)
             end
         end
     end,

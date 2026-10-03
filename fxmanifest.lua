@@ -1,5 +1,6 @@
 game "gta5"
 fx_version "cerulean"
+author "XenoS"
 
 server_scripts {
     "build.lua",

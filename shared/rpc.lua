@@ -103,6 +103,11 @@ local function rpc_entity(className, fn, _return)
         local tag = "${ogname}(${source})"
 
         if not entity then
+            -- A OneSync entity can be destroyed while a client is still asking to spawn it
+            if ogname == "_askPermission" then
+                return false
+            end
+
             error("${tag}: Entity with id ${tostring(id)} does not exist")
             return
         end

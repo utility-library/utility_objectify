@@ -496,6 +496,13 @@ UtilityNet.OnRender(function(id, obj, model)
 
     CallMethodForAllObjectScripts(objInfo, "OnAwake")
     CallMethodForAllObjectScripts(objInfo, "OnSpawn")
+
+    local main = GetObjectScriptInstance(obj, "main", true)
+
+    if main and main.isAlive and not main:isAlive() then
+        return
+    end
+
     CallMethodForAllObjectScripts(objInfo, "AfterSpawn")
     
     -- During the different calls the entity could have been deleted
