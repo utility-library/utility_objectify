@@ -863,6 +863,8 @@ class BaseEntityOneSync extends BaseEntity {
 
             UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
 
+            SetEntityOrphanMode(self.obj, 2)
+
             -- Give time to the children to be added
             Citizen.SetTimeout(1, function()
                 self:callOnAll("OnAwake")
@@ -888,10 +890,12 @@ class BaseEntityOneSync extends BaseEntity {
         self:callOnAll("OnDestroy")
 
         local entity = NetworkGetEntityFromNetworkId(self.netId)
-        local rotation = GetEntityRotation(entity)
+        local exists = DoesEntityExist(entity)
 
         if UtilityNet.DoesUNetIdExist(self.id) then
-            UtilityNet.SetEntityRotation(self.id, rotation)
+            if exists then
+                UtilityNet.SetEntityRotation(self.id, GetEntityRotation(entity))
+            end
             UtilityNet.DetachEntity(self.id)
 
             self.state.netId = nil
@@ -900,7 +904,10 @@ class BaseEntityOneSync extends BaseEntity {
 
         self.netId = nil
         self.obj = nil
-        DeleteEntity(entity)
+
+        if exists then
+            DeleteEntity(entity)
+        end
     end,
 
     _askPermission = function()
@@ -917,6 +924,16 @@ AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
     local entity = Entities:get(uNetId)
     if entity and entity is BaseEntityOneSync then
         entity:destroy()
+    end
+end)
+
+-- OneSync can remove the networked entity on its own, release it so the next renderer recreates it
+AddEventHandler("entityRemoved", function(removed)
+    for _, entity in pairs(Entities.list) do
+        if entity is BaseEntityOneSync and entity.obj == removed then
+            entity:destroyNetId()
+            return
+        end
     end
 end)
 

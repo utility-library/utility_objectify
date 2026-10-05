@@ -1965,6 +1965,8 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
 
             UtilityNet.AttachToNetId(self.id, netId, 0, vec3(0,0,0), vec3(0,0,0), false, false, 1, true)
 
+            SetEntityOrphanMode(self.obj, 2)
+
                     
             Citizen.SetTimeout(1, function()
                 self:callOnAll("OnAwake")
@@ -1990,10 +1992,12 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
         self:callOnAll("OnDestroy")
 
         local entity = NetworkGetEntityFromNetworkId(self.netId)
-        local rotation = GetEntityRotation(entity)
+        local exists = DoesEntityExist(entity)
 
         if UtilityNet.DoesUNetIdExist(self.id) then
-            UtilityNet.SetEntityRotation(self.id, rotation)
+            if exists then
+                UtilityNet.SetEntityRotation(self.id, GetEntityRotation(entity))
+            end
             UtilityNet.DetachEntity(self.id)
 
             self.state.netId = nil
@@ -2002,7 +2006,10 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
 
         self.netId = nil
         self.obj = nil
-        DeleteEntity(entity)
+
+        if exists then
+            DeleteEntity(entity)
+        end
     end, {args={},name="destroyNetId",}),
 
     _askPermission = leap.registerfunc(function(self)
@@ -2019,6 +2026,16 @@ AddEventHandler("Utility:Net:EntityDeleted", function(uNetId)
     local entity = Entities:get(uNetId)
     if entity and _leap_internal_is_operator(entity,  BaseEntityOneSync) then
         entity:destroy()
+    end
+end)
+
+                 
+AddEventHandler("entityRemoved", function(removed)
+    for _, entity in pairs(Entities.list) do
+        if _leap_internal_is_operator(entity,  BaseEntityOneSync) and entity.obj == removed then
+            entity:destroyNetId()
+            return
+        end
     end
 end)
 
