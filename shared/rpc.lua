@@ -99,8 +99,16 @@ local function rpc_entity(className, fn, _return)
     --]]
     local _fn = leap.registerfunc(function(id, ...)
         local source = source or "SERVER"
-        local entity = Entities:getBy("id", id)
+        local entity = Entities:get(id)
         local tag = "${ogname}(${source})"
+
+        if not entity and IsClient and ogname ~= "_askPermission" then
+            local start = GetGameTimer()
+            while not entity and GetGameTimer() - start < 5000 do
+                Wait(0)
+                entity = Entities:get(id)
+            end
+        end
 
         if not entity then
             -- A OneSync entity can be destroyed while a client is still asking to spawn it
