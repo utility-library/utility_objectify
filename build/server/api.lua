@@ -299,8 +299,16 @@ local  rpc_entity = leap.registerfunc(function(className, fn, _return)
     
     local _fn = leap.registerfunc(leap.registerfunc(function(id, ...)
         local source = source or "SERVER"
-        local entity = Entities:getBy("id", id)
+        local entity = Entities:get(id)
         local tag = ""..(ogname).."("..(source)..")"
+
+        if not entity and IsClient and ogname ~= "_askPermission" then
+            local start = GetGameTimer()
+            while not entity and GetGameTimer() - start < 5000 do
+                Wait(0)
+                entity = Entities:get(id)
+            end
+        end
 
         if not entity then
                            
@@ -417,6 +425,68 @@ if not UtilityNet then
     error("Please load the utility_lib before utility_objectify!")
 end
 
+local spawnedOn = {}
+
+RegisterNetEvent("utility_objectify:EntitySpawned", function(id)
+    local source = source
+
+    if not Entities:get(id) then
+        return
+    end
+
+    spawnedOn[id] = spawnedOn[id] or {}
+    spawnedOn[id][source] = true
+end)
+
+RegisterNetEvent("utility_objectify:EntityDespawned", function(id)
+    local source = source
+
+    if spawnedOn[id] then
+        spawnedOn[id][source] = nil
+    end
+end)
+
+AddEventHandler("playerDropped", function()
+    local source = source
+
+    for _, clients in pairs(spawnedOn) do
+        clients[source] = nil
+    end
+end)
+
+local  findListeners = leap.registerfunc(function(id, cid)
+    local clients = spawnedOn[id]
+    if not clients then
+        return nil
+    end
+
+    if cid ~= -1 then
+        return clients[cid] and cid or nil
+    end
+
+    local targets = {}
+    for client in pairs(clients) do
+        targets[#targets + 1] = client
+    end
+
+    return #targets > 0 and targets or nil
+end, {args={{name = "id"},{name = "cid"},},name="findListeners",has_return=true,})
+
+local  waitForListeners = leap.registerfunc(function(id, cid, timeout)if timeout == nil then timeout = 5000 end;
+    local start = GetGameTimer()
+
+    while Entities:get(id) and GetGameTimer() - start < timeout do
+        local targets = findListeners(id, cid)
+        if targets then
+            return targets
+        end
+
+        Citizen.Wait(50)
+    end
+
+    return findListeners(id, cid)
+end, {args={{name = "id"},{name = "cid"},{name = "timeout"},},name="waitForListeners",has_return=true,})
+
 local client_rpc_mt, client_plugin_rpc_mt = nil  
 client_rpc_mt = {
     __index = leap.registerfunc(function(self, key)
@@ -479,13 +549,27 @@ client_rpc_mt = {
                     end
                 end, {args={{name = "_cid"},},name="call",has_return=true,})
 
-                if cid == -1 then
-                    local ids = exports["utility_lib"]:GetEntityListeners(self.id)
-
-                    return call(ids, ...)
-                else
-                    return call(cid, ...)
+                local targets = findListeners(self.id, cid)
+                if targets then
+                    return call(targets, ...)
                 end
+
+                if hasAwait then
+                    targets = waitForListeners(self.id, cid)
+                    if not targets then
+                        return
+                    end
+
+                    return call(targets, ...)
+                end
+
+                local args = table.pack(...)
+                Citizen.CreateThread(function()
+                    local targets = waitForListeners(self.id, cid)
+                    if targets then
+                        call(targets, table.unpack(args, 1, args.n))
+                    end
+                end)
             end
         end, {args={},name="fn",has_return=true,})
 
@@ -572,6 +656,7 @@ local EMPTY_CHILDREN = {}
     
     destroy = leap.registerfunc(function(self)
         Entities:remove(self)
+        spawnedOn[self.id] = nil
         
         self:callOnAll("OnDestroy")
 
@@ -708,6 +793,29 @@ local EMPTY_CHILDREN = {}
             UtilityNet.SetEntityRotation(self.id, rotation)
         end
     end, {args={{name = "rotation"},},name="setRotation",}),
+
+    attachTo = leap.registerfunc(function(self, target, bone, pos, rot, options)if _type(target) ~= "table" and not _leap_internal_is_operator(target, BaseEntity) and type(target) ~= "number" then error('target: must be (BaseEntity | number) or a derived class but got '..type(target)..'', 2) end;if bone == nil then bone = 0 end;if pos == nil then pos = vec3(0, 0, 0) end;if rot == nil then rot = vec3(0, 0, 0) end;if options == nil then options = {} end;
+        if not self.id then
+            return
+        end
+
+        local softPinning = options.useSoftPinning or false
+        local collision = options.collision or false
+        local rotationOrder = options.rotationOrder or 1
+        local syncRot = options.syncRot ~= false
+
+        if type(target) == "number" then
+            UtilityNet.AttachToNetId(self.id, target, bone, pos, rot, softPinning, collision, rotationOrder, syncRot)
+        else
+            UtilityNet.AttachToEntity(self.id, target.id, bone, pos, rot, softPinning, collision, rotationOrder, syncRot)
+        end
+    end, {args={{name = "target"},{name = "bone"},{name = "pos"},{name = "rot"},{name = "options"},},name="attachTo",}),
+
+    detach = leap.registerfunc(function(self)
+        if self.id then
+            UtilityNet.DetachEntity(self.id)
+        end
+    end, {args={},name="detach",}),
 
     addChild = leap.registerfunc(function(self, name, child)if type(name) ~= "string" then error('name: must be (string) but got '..type(name)..'', 2) end;if _type(child) ~= "table" and not _leap_internal_is_operator(child, BaseEntity) then error('child: must be (BaseEntity) or a derived class but got '..type(child)..'', 2) end;
         if not child.id then
@@ -876,6 +984,30 @@ _leap_internal_classBuilder("BaseEntityOneSync",{
             error("Created: Client "..source.." passed an invalid netId "..netId)
          elseif _leap_internal_result ~= nil then return _leap_internal_result end;
     end, {args={{name = "netId"},},name="_created",}),
+
+    setCoords = leap.registerfunc(function(self, coords)
+        if self.obj and DoesEntityExist(self.obj) then
+            SetEntityCoords(self.obj, coords)
+        end
+
+        BaseEntity.__prototype.setCoords(self,coords)
+    end, {args={{name = "coords"},},name="setCoords",}),
+
+    setRotation = leap.registerfunc(function(self, rotation)
+        if self.obj and DoesEntityExist(self.obj) then
+            SetEntityRotation(self.obj, rotation.x, rotation.y, rotation.z, 2, true)
+        end
+
+        BaseEntity.__prototype.setRotation(self,rotation)
+    end, {args={{name = "rotation"},},name="setRotation",}),
+
+    detach = leap.registerfunc(function(self)
+        BaseEntity.__prototype.detach(self)
+
+        if self.netId then
+            UtilityNet.AttachToNetId(self.id, self.netId, 0, vec3(0, 0, 0), vec3(0, 0, 0), false, false, 1, true)
+        end
+    end, {args={},name="detach",}),
 
     destroy = leap.registerfunc(function(self)
         BaseEntity.__prototype.destroy(self)

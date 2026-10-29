@@ -299,8 +299,16 @@ local function rpc_entity(className, fn, _return)
     --]]
     local _fn = leap.registerfunc(function(id, ...)
         local source = source or "SERVER"
-        local entity = Entities:getBy("id", id)
+        local entity = Entities:get(id)
         local tag = "${ogname}(${source})"
+
+        if not entity and IsClient and ogname ~= "_askPermission" then
+            local start = GetGameTimer()
+            while not entity and GetGameTimer() - start < 5000 do
+                Wait(0)
+                entity = Entities:get(id)
+            end
+        end
 
         if not entity then
             -- A OneSync entity can be destroyed while a client is still asking to spawn it
@@ -630,6 +638,10 @@ class BaseEntity {
     end,
 
     _AfterOnSpawn = function()
+        if not self.isPlugin then
+            TriggerServerEvent("utility_objectify:EntitySpawned", self.id)
+        end
+
         local function onStateChange(listeners, value, initial)
             for _, data in pairs(listeners) do
                 if data.value ~= nil then
@@ -679,6 +691,7 @@ class BaseEntity {
 
         if not self.isPlugin then
             Entities:remove(self)
+            TriggerServerEvent("utility_objectify:EntityDespawned", self.id)
         end
     end,
 
@@ -774,6 +787,56 @@ class BaseEntity {
 }
 
 class BaseEntityOneSync extends BaseEntity {
+    constructor = function()
+        self:super()
+
+        state(self, function(attached)
+            self:_OnAttachedChange(attached)
+        end, "__attached")
+    end,
+
+    _GetAttachTarget = function(attached)
+        local start = GetGameTimer()
+
+        while GetGameTimer() - start < 5000 and DoesEntityExist(self.obj) do
+            if attached.params.isUtilityNet then
+                local entity = Entities:get(attached.object)
+                if entity and DoesEntityExist(entity.obj) then
+                    return entity.obj
+                end
+            elseif NetworkDoesEntityExistWithNetworkId(attached.object) then
+                return NetworkGetEntityFromNetworkId(attached.object)
+            end
+
+            Wait(0)
+        end
+    end,
+
+    _OnAttachedChange = function(attached)
+        if not DoesEntityExist(self.obj) or not NetworkHasControlOfEntity(self.obj) then
+            return
+        end
+
+        if not attached or (not attached.params.isUtilityNet and attached.object == self.netId) then
+            DetachEntity(self.obj, true, true)
+            return
+        end
+
+        local target = self:_GetAttachTarget(attached)
+        if not target then
+            return
+        end
+
+        local params = attached.params
+        local bone = params.bone
+
+        if params.boneServer and params.boneServer > 0 then
+            bone = IsEntityAPed(target) and GetPedBoneIndex(target, params.boneServer) or GetEntityBoneIndexByName(target, params.boneServer)
+        end
+
+        AttachEntityToEntity(self.obj, target, bone, params.pos, params.rot, false, params.useSoftPinning, params.collision, true, params.rotationOrder, params.syncRot)
+    end,
+
     _CreateOneSyncEntity = function(enttype)
         local _obj = nil
 

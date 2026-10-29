@@ -299,8 +299,16 @@ local function rpc_entity(className, fn, _return)
     --]]
     local _fn = leap.registerfunc(function(id, ...)
         local source = source or "SERVER"
-        local entity = Entities:getBy("id", id)
+        local entity = Entities:get(id)
         local tag = "${ogname}(${source})"
+
+        if not entity and IsClient and ogname ~= "_askPermission" then
+            local start = GetGameTimer()
+            while not entity and GetGameTimer() - start < 5000 do
+                Wait(0)
+                entity = Entities:get(id)
+            end
+        end
 
         if not entity then
             -- A OneSync entity can be destroyed while a client is still asking to spawn it
@@ -632,6 +640,10 @@ class BaseEntity {
     end,
 
     _AfterOnSpawn = function()
+        if not self.isPlugin then
+            TriggerServerEvent("utility_objectify:EntitySpawned", self.id)
+        end
+
         local function onStateChange(listeners, value, initial)
             for _, data in pairs(listeners) do
                 if data.value ~= nil then
@@ -681,6 +693,7 @@ class BaseEntity {
 
         if not self.isPlugin then
             Entities:remove(self)
+            TriggerServerEvent("utility_objectify:EntityDespawned", self.id)
         end
     end,
 
@@ -776,6 +789,56 @@ class BaseEntity {
 }
 
 class BaseEntityOneSync extends BaseEntity {
+    constructor = function()
+        self:super()
+
+        state(self, function(attached)
+            self:_OnAttachedChange(attached)
+        end, "__attached")
+    end,
+
+    _GetAttachTarget = function(attached)
+        local start = GetGameTimer()
+
+        while GetGameTimer() - start < 5000 and DoesEntityExist(self.obj) do
+            if attached.params.isUtilityNet then
+                local entity = Entities:get(attached.object)
+                if entity and DoesEntityExist(entity.obj) then
+                    return entity.obj
+                end
+            elseif NetworkDoesEntityExistWithNetworkId(attached.object) then
+                return NetworkGetEntityFromNetworkId(attached.object)
+            end
+
+            Wait(0)
+        end
+    end,
+
+    _OnAttachedChange = function(attached)
+        if not DoesEntityExist(self.obj) or not NetworkHasControlOfEntity(self.obj) then
+            return
+        end
+
+        if not attached or (not attached.params.isUtilityNet and attached.object == self.netId) then
+            DetachEntity(self.obj, true, true)
+            return
+        end
+
+        local target = self:_GetAttachTarget(attached)
+        if not target then
+            return
+        end
+
+        local params = attached.params
+        local bone = params.bone
+
+        if params.boneServer and params.boneServer > 0 then
+            bone = IsEntityAPed(target) and GetPedBoneIndex(target, params.boneServer) or GetEntityBoneIndexByName(target, params.boneServer)
+        end
+
+        AttachEntityToEntity(self.obj, target, bone, params.pos, params.rot, false, params.useSoftPinning, params.collision, true, params.rotationOrder, params.syncRot)
+    end,
+
     _CreateOneSyncEntity = function(enttype)
         local _obj = nil
 
@@ -1519,6 +1582,68 @@ if not UtilityNet then
     error("Please load the utility_lib before utility_objectify!")
 end
 
+local spawnedOn = {}
+
+RegisterNetEvent("utility_objectify:EntitySpawned", function(id)
+    local source = source
+
+    if not Entities:get(id) then
+        return
+    end
+
+    spawnedOn[id] = spawnedOn[id] or {}
+    spawnedOn[id][source] = true
+end)
+
+RegisterNetEvent("utility_objectify:EntityDespawned", function(id)
+    local source = source
+
+    if spawnedOn[id] then
+        spawnedOn[id][source] = nil
+    end
+end)
+
+AddEventHandler("playerDropped", function()
+    local source = source
+
+    for _, clients in pairs(spawnedOn) do
+        clients[source] = nil
+    end
+end)
+
+local function findListeners(id, cid)
+    local clients = spawnedOn[id]
+    if not clients then
+        return nil
+    end
+
+    if cid ~= -1 then
+        return clients[cid] and cid or nil
+    end
+
+    local targets = {}
+    for client in pairs(clients) do
+        targets[#targets + 1] = client
+    end
+
+    return #targets > 0 and targets or nil
+end
+
+local function waitForListeners(id, cid, timeout = 5000)
+    local start = GetGameTimer()
+
+    while Entities:get(id) and GetGameTimer() - start < timeout do
+        local targets = findListeners(id, cid)
+        if targets then
+            return targets
+        end
+
+        Citizen.Wait(50)
+    end
+
+    return findListeners(id, cid)
+end
+
 local client_rpc_mt, client_plugin_rpc_mt = nil -- hoisting
 client_rpc_mt = {
     __index = function(self, key)
@@ -1581,13 +1706,27 @@ client_rpc_mt = {
                     end
                 end
 
-                if cid == -1 then
-                    local ids = exports["utility_lib"]:GetEntityListeners(self.id)
-
-                    return call(ids, ...)
-                else
-                    return call(cid, ...)
+                local targets = findListeners(self.id, cid)
+                if targets then
+                    return call(targets, ...)
                 end
+
+                if hasAwait then
+                    targets = waitForListeners(self.id, cid)
+                    if not targets then
+                        return
+                    end
+
+                    return call(targets, ...)
+                end
+
+                local args = table.pack(...)
+                Citizen.CreateThread(function()
+                    local targets = waitForListeners(self.id, cid)
+                    if targets then
+                        call(targets, table.unpack(args, 1, args.n))
+                    end
+                end)
             end
         end
 
@@ -1674,6 +1813,7 @@ class BaseEntity {
     
     destroy = function()
         Entities:remove(self)
+        spawnedOn[self.id] = nil
         
         self:callOnAll("OnDestroy")
 
@@ -1808,6 +1948,29 @@ class BaseEntity {
     setRotation = function(rotation)
         if self.id then
             UtilityNet.SetEntityRotation(self.id, rotation)
+        end
+    end,
+
+    attachTo = function(target: BaseEntity | number, bone = 0, pos = vec3(0, 0, 0), rot = vec3(0, 0, 0), options = {})
+        if not self.id then
+            return
+        end
+
+        local softPinning = options.useSoftPinning or false
+        local collision = options.collision or false
+        local rotationOrder = options.rotationOrder or 1
+        local syncRot = options.syncRot ~= false
+
+        if type(target) == "number" then
+            UtilityNet.AttachToNetId(self.id, target, bone, pos, rot, softPinning, collision, rotationOrder, syncRot)
+        else
+            UtilityNet.AttachToEntity(self.id, target.id, bone, pos, rot, softPinning, collision, rotationOrder, syncRot)
+        end
+    end,
+
+    detach = function()
+        if self.id then
+            UtilityNet.DetachEntity(self.id)
         end
     end,
 
@@ -1976,6 +2139,30 @@ class BaseEntityOneSync extends BaseEntity {
         catch e
             self.spawned = false
             error("Created: Client "..source.." passed an invalid netId "..netId)
+        end
+    end,
+
+    setCoords = function(coords)
+        if self.obj and DoesEntityExist(self.obj) then
+            SetEntityCoords(self.obj, coords)
+        end
+
+        self.super:setCoords(coords)
+    end,
+
+    setRotation = function(rotation)
+        if self.obj and DoesEntityExist(self.obj) then
+            SetEntityRotation(self.obj, rotation.x, rotation.y, rotation.z, 2, true)
+        end
+
+        self.super:setRotation(rotation)
+    end,
+
+    detach = function()
+        self.super:detach()
+
+        if self.netId then
+            UtilityNet.AttachToNetId(self.id, self.netId, 0, vec3(0, 0, 0), vec3(0, 0, 0), false, false, 1, true)
         end
     end,
 
